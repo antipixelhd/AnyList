@@ -30,7 +30,10 @@ from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, Track
 from models.sync import SyncJob
 from schemas_list_categories import CategoryPatch, CategoryPresentation
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
-from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ContributorAvailability, ListScope
+from schemas_contributors import (
+    ContributorAvailability, ContributorEpisodeCredits, ContributorImages, ContributorKind,
+    ContributorMediaScope, ContributorPage, ListScope, PersonCreditRole,
+)
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
@@ -818,18 +821,20 @@ async def quick_search_contributors(
     q: Annotated[str, Query(max_length=100)] = '',
     kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
     work_domain: Literal['all', 'movies_series', 'game'] = 'all',
+    group_people: bool = False,
     search_id: Annotated[str | None, Query(pattern=r'^[a-zA-Z0-9-]{16,64}$')] = None,
     search_generation: Annotated[int, Query(ge=0, le=9007199254740991)] = 0,
 ) -> dict:
     term = q.strip()
+    grouping = {'group_people': True} if kind == 'people' and group_people else {}
     if len(term) < 2:
-        return {'results': {'actor': [], 'staff': [], 'studio': []}}
+        return {'results': {'people': []} if grouping else {'actor': [], 'staff': [], 'studio': []}}
     from core.contributor_search import search_contributors
     from core import search_demand
     from core.game_work import work_context, Priority
     value = await search_demand.begin(db, viewer.id, search_id, search_generation, term, work_domain) if search_id else None
     with search_demand.context(value), work_context(Priority.FINISH, f'search-user:{viewer.id}', replace=True):
-        return await search_contributors(db, viewer, term, kind, work_domain)
+        return await search_contributors(db, viewer, term, kind, work_domain, **grouping)
 
 
 @router.delete('/quick-search/demand/{search_id}')
@@ -1028,9 +1033,27 @@ async def contributor_domain_availability(
     return ContributorAvailability.model_validate(result)
 
 
+@router.get('/contributors/person/{contributor_key}/series/{series_id}/episode-credits')
+async def contributor_episode_credits(
+    contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    series_id: Annotated[int, Path(ge=1, le=2147483647)],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+    after_season: Annotated[int | None, Query(ge=0)] = None,
+) -> ContributorEpisodeCredits:
+    from core.contributor_episodes import episode_credits
+    await catalog_access(db, viewer)
+    if int(contributor_key.split(':')[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid contributor identifier')
+    response.headers['Cache-Control'] = 'private, no-store'
+    return ContributorEpisodeCredits.model_validate(await episode_credits(
+        db, viewer, key=contributor_key, series_id=series_id, after_season=after_season))
+
+
 @router.get('/contributors/{kind}/{contributor_key}')
 async def contributor_details(
-    kind: ContributorKind,
+    kind: Literal['actor', 'staff', 'studio', 'person'],
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
@@ -1041,6 +1064,7 @@ async def contributor_details(
     page: Annotated[int, Query(ge=1, le=500)] = 1,
     cursor: Annotated[str | None, Query(max_length=400)] = None,
     source: Literal['', 'local', 'provider'] = '',
+    role: PersonCreditRole | None = None,
 ) -> ContributorPage:
     from core.contributor_details import contributor_page
     from core.game_contributor_works import GameWorksChanged
@@ -1054,7 +1078,7 @@ async def contributor_details(
     try:
         result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
                                         media_type=media_type, list_scope=list_scope, status=status,
-                                        page=page, cursor=cursor, source=source)
+                                        page=page, cursor=cursor, source=source, role=role)
     except GameWorksChanged:
         raise HTTPException(409, 'Game works changed. Refresh the works to continue.') from None
     except ValueError:
@@ -1214,10 +1238,7 @@ async def profile_series_seasons(username: str, media_id: Annotated[int, Path(gt
     media, scores = row
     status = {}
     if owner and (media.tmdb_id or media.tvdb_id) and not tracking_episode_loading.fresh(media):
-        try:
-            status = await asyncio.wait_for(tracking_episode_loading.ensure(db, media, user_id), timeout=.25)
-        except TimeoutError:
-            status = {'pending': True, 'retry_after': 2}
+        status = await tracking_episode_loading.ensure(db, media, user_id, wait_timeout=.25)
         if status.get('ready') and not status.get('pending'):
             await db.refresh(media)
     summary = await screen_list.series_seasons(db, media, user_id, scores)

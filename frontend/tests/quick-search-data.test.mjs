@@ -21,7 +21,7 @@ test('active search generations are shared by sections and isolated between wind
 });
 
 test('category completion publishes even when rows and overall verification are unchanged',async()=>{
-  const states=[{actor:true,staff:true},{actor:false,staff:true}];
+  const states=[{people:true,studio:true},{people:false,studio:true}];
   let calls=0;const seen=[];
   const signal=new AbortController();
   await readQuickSearch({kind:'contributors',url:'/people'},signal.signal,data=>{
@@ -41,10 +41,10 @@ test('contributor discovery follows enabled domains instead of revealing hidden 
 test('movie/series opt-out rejects title fan-out and title tabs together, retaining shared people search',()=>{
   const requests=quickSearchRequests('Troy',undefined,false,false);
   assert.equal(requests.length,2);assert.ok(requests.every(request=>request.kind==='contributors'));
-  const counts={all:1,movie:1,series:0,actor:2,staff:1,studio:0};
+  const counts={all:1,movie:1,series:0,people:2,studio:0};
   const order=quickSearchTabOrder(true,false,false);
-  assert.deepEqual(order,['actor','staff','studio']);
-  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all','game'])),['actor','staff']);
+  assert.deepEqual(order,['people','studio']);
+  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all','game'])),['people']);
 });
 
 test('warm titles reuse private dialog cache until expiry, invalidation or unmount',async()=>{
@@ -207,14 +207,15 @@ test('desktop searches both media types and all contributors without duplicating
   assert.deepEqual(requests.map(row=>row.kind),['movie','series','game','contributors','contributors']);
   const params=new URL(requests[3].url,'https://anylist.test').searchParams;
   assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'people');
+  assert.equal(params.get('group_people'),'true');
   assert.equal(new URL(requests[4].url,'https://anylist.test').searchParams.get('kind'),'studio');
 });
 
 test('independent studio verification never erases people, regardless of response order',()=>{
   for(const order of [['studio','people'],['people','studio']]){
-    let values={actor:[],staff:[],studio:[]};
-    for(const scope of order)values=mergeContributorResults(values,scope==='studio'?{studio:['DC']}:{actor:['Actor'],staff:['Director']},scope);
-    assert.deepEqual(values,{actor:['Actor'],staff:['Director'],studio:['DC']});
+    let values={people:[],studio:[]};
+    for(const scope of order)values=mergeContributorResults(values,scope==='studio'?{studio:['DC']}:{people:['Actor','Director']},scope);
+    assert.deepEqual(values,{people:['Actor','Director'],studio:['DC']});
   }
 });
 test('mobile tabs share the same simultaneous media and contributor requests',()=>{
@@ -229,39 +230,39 @@ test('combined movie and series results follow shared relevance instead of alter
     ['War series','War movie','War stories','War report']);
 });
 test('enabled sections start together and leave as their sources settle empty',()=>{
-  const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};
+  const counts={all:3,movie:1,series:2,people:2,studio:0};
   const combined=quickSearchTabOrder(true);
-  assert.deepEqual(availableQuickSearchTabs(combined, {}, new Set(combined)),['all','game','actor','staff','studio']);
-  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set(['staff'])),['all','actor','staff','studio']);
-  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set()),['all','actor','studio']);
-  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(false), counts, new Set()),['movie','series','actor','studio']);
+  assert.deepEqual(availableQuickSearchTabs(combined, {}, new Set(combined)),['all','game','people','studio']);
+  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set(['studio'])),['all','people','studio']);
+  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set()),['all','people']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(false), counts, new Set()),['movie','series','people']);
 });
 
 test('separate mobile lists navigate movies and series independently through loading and empty results',()=>{
-  const empty={all:0,movie:0,series:0,actor:0,staff:0,studio:0};
+  const empty={all:0,movie:0,series:0,people:0,studio:0};
   const order=quickSearchTabOrder(false);
-  assert.deepEqual(order,['movie','series','game','actor','staff','studio']);
+  assert.deepEqual(order,['movie','series','game','people','studio']);
   assert.deepEqual(availableQuickSearchTabs(order, empty, new Set(['movie','series'])),['movie','series']);
-  const counts={...empty,all:2,series:2,actor:1};
+  const counts={...empty,all:2,series:2,people:1};
   const available=availableQuickSearchTabs(order, counts, new Set());
-  assert.deepEqual(available,['series','actor']);
+  assert.deepEqual(available,['series','people']);
   assert.equal(resolvedQuickSearchTab('movie',available),'series');
-  assert.equal(steppedQuickSearchTab('series',available,1),'actor');
-  assert.equal(steppedQuickSearchTab('actor',available,1),'series');
+  assert.equal(steppedQuickSearchTab('series',available,1),'people');
+  assert.equal(steppedQuickSearchTab('people',available,1),'series');
   assert.equal(resolvedQuickSearchTab('series',availableQuickSearchTabs(quickSearchTabOrder(true),counts,new Set())),'all');
 });
 
 test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{
-  const counts={all:0,movie:0,series:0,actor:2,staff:0,studio:1};
+  const counts={all:0,movie:0,series:0,people:2,studio:1};
   const order=quickSearchTabOrder(true);
   const available=availableQuickSearchTabs(order, counts, new Set());
-  assert.deepEqual(available,['actor','studio']);
-  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all'])),['all','actor','studio']);
-  assert.equal(resolvedQuickSearchTab('all',available),'actor');
-  assert.equal(steppedQuickSearchTab('actor',available,-1),'studio');
-  assert.equal(steppedQuickSearchTab('studio',available,1),'actor');
-  assert.equal(steppedQuickSearchTab('actor',['actor'],1),null);
-  assert.equal(resolvedQuickSearchTab('staff',[]),'all');
+  assert.deepEqual(available,['people','studio']);
+  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all'])),['all','people','studio']);
+  assert.equal(resolvedQuickSearchTab('all',available),'people');
+  assert.equal(steppedQuickSearchTab('people',available,-1),'studio');
+  assert.equal(steppedQuickSearchTab('studio',available,1),'people');
+  assert.equal(steppedQuickSearchTab('people',['people'],1),null);
+  assert.equal(resolvedQuickSearchTab('studio',[]),'all');
 });
 
 

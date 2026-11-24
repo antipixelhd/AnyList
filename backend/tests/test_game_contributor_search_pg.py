@@ -121,6 +121,11 @@ class GameContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.query('Game company','studio','movies_series'))['results']['studio'])
         self.assertFalse((await self.query('%','actor','game'))['results']['actor'])
 
+    async def test_game_search_recovers_misspelled_person_alias(self):
+        await self.seed(1)
+        result = await self.query('Verifed alias', 'people', 'game')
+        self.assertEqual([row['key'] for row in result['results']['actor']], [f'catalogue:{self.person_id}'])
+
     async def test_retired_cast_and_work_metadata_invalidate_only_game_qualification(self):
         games, _, _ = await self.seed(1)
         async with self.Session() as db:

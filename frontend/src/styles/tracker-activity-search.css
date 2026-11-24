@@ -199,7 +199,7 @@
   border-radius:4px;
 }
 .quick-search-skeleton-image { width:40px; height:40px; }
-:is([data-search-section=actor],[data-search-section=staff]) .quick-search-skeleton-image { border-radius:50%; }
+[data-search-section=people] .quick-search-skeleton-image { border-radius:50%; }
 .quick-search-skeleton-copy { display:grid; gap:6px; }
 .quick-search-skeleton-copy > span:first-child { width:68%; height:11px; }
 .quick-search-skeleton-copy > span:last-child { width:34%; height:8px; }

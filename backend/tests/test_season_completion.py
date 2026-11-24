@@ -505,6 +505,28 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             cards = list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id)))
             self.assertFalse(any(last_episode in card.payload.get('progress_episode_ids', []) for card in cards))
 
+    async def test_profile_seasons_keeps_its_session_when_episode_status_read_is_slow(self):
+        from core import tracking_episode_loading as loading
+        from models.catalogue import MetadataSnapshot
+
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {key: value for key, value in series.tmdb_data.items()
+                                if key != 'tracking_catalogue_refreshed_at'}
+            db.add(MetadataSnapshot(provider=loading.PROVIDER, kind=loading.KIND,
+                external_id=str(series.id), next_attempt_at=loading.now() + timedelta(seconds=30)))
+            await db.commit()
+
+        query = loading.query
+        def slow_query(media_id):
+            return query(media_id).where(text('EXISTS (SELECT 1 FROM pg_sleep(0.35))'))
+
+        with patch.object(loading, 'query', side_effect=slow_query):
+            response = await self.client.get(f'/tracking/profile/{self.viewer.username}/series/{self.series_id}/seasons')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()['pending'])
+        self.assertEqual([season['total'] for season in response.json()['seasons']], [2, 2])
+
     async def test_editor_displays_released_total_for_placeholder_schedule(self):
         url = f'/tracking/entry/{self.series_id}/series-editor'
         profile = f'/tracking/profile/{self.viewer.username}/series'

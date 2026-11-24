@@ -17,11 +17,12 @@ from core.catalog_search import category_exclusion, result_filters, matches_resu
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
 from core.credit_roles import work_credit
+from core.contributor_roles import PERSON_ROLES, preferred_role, primary_profession
 from core.tracking_editor import attach_editor_context
 from core.studio_groups import studio_root, studio_members, studio_companies, studio_display_name, studio_entity_ids
 from models import Media
 from models.base import MediaType
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, ContributorSearch, MetadataSnapshot
 from models.title_credits import TitleCredits
 from models.tracking import TrackedEntry
 
@@ -47,7 +48,7 @@ def is_actor(credit):
 
 
 def accepted_role(kind, acting):
-    return kind == "studio" or acting == (kind == "actor")
+    return kind in ("person", "studio") or acting == (kind == "actor")
 
 
 def merge_work_metadata(preferred, fallback):
@@ -135,18 +136,21 @@ async def known_works(db, entity, native, kind, viewer):
             if media and media.adult:
                 data["adult"] = True
             ids = work_identities[work.id]
+            credit_role = "actor" if is_actor(credit) else "staff"
             rows.append({"key": f"catalogue:{work.id}", "id": media.id if media else None,
                 "tmdb_id": ids.get("tmdb") or (media.tmdb_id if media else None), "type": work.kind,
                 "title": work.name, "poster": poster(work.image_url or (media.poster_path if media else None)),
                 "backdrop": poster(media.backdrop_path if media else data.get("backdrop_path")),
                 "release_date": data.get("release_date") or data.get("first_air_date") or (media.release_date if media else None),
                 "year": (data.get("release_date") or data.get("first_air_date") or (media.release_date if media else "") or "")[:4],
-                "roles": [role_label(credit)], "characters": [credit.character_label] if is_actor(credit) and credit.character_label else [],
+                "roles": [role_label(credit)], "characters": [credit.character_label] if credit_role == "actor" and credit.character_label else [],
+                "_credit_role": credit_role,
                 "href": f"https://www.thetvdb.com/dereferrer/{'movie' if work.kind == 'movie' else 'series'}/{ids['tvdb']}" if not media and not ids.get("tmdb") and ids.get("tvdb") else None,
                 "_metadata": data})
     if native:
         natives = studio_members(native) if kind == 'studio' else (native,)
-        fields = ("studios",) if kind == "studio" else ("cast",) if kind == "actor" else ("directors", "writers")
+        fields = {"studio": ("studios",), "actor": ("cast",), "staff": ("directors", "writers"),
+                  "person": ("cast", "directors", "writers")}[kind]
         cached = list(await db.scalars(select(TitleCredits).where(or_(*[
             getattr(TitleCredits, field).contains([{"id": member}]) for field in fields for member in natives
         ]))))
@@ -155,11 +159,11 @@ async def known_works(db, entity, native, kind, viewer):
         if kind != "actor":
             terms.extend(Media.tmdb_data[metadata_field].contains([{"id": member}]) for member in natives)
         local = list(await db.scalars(select(Media).where(Media.media_type.in_((MediaType.movie, MediaType.series)), or_(*terms)))) if terms else []
+        by_title = {(row.media_type, row.tmdb_id): row for row in cached}
         for media in sorted(local, key=lambda m: (m.id not in own, m.id)):
             matches = []
-            for cached_row in cached:
-                if (cached_row.media_type, cached_row.tmdb_id) != (media.media_type.value, media.tmdb_id):
-                    continue
+            cached_row = by_title.get((media.media_type.value, media.tmdb_id))
+            if cached_row:
                 for field in fields:
                     matches += [(p, {"cast": "Actor", "directors": "Director", "writers": "Writer", "studios": "Production"}[field]) for p in getattr(cached_row, field) or [] if isinstance(p, dict) and positive_id(p.get("id")) in natives]
             matches += [(p, "Production" if kind == "studio" else "Creator") for p in (media.tmdb_data or {}).get(metadata_field) or [] if kind != "actor" and isinstance(p, dict) and positive_id(p.get("id")) in (studio_members(native) if kind == 'studio' else (native,))]
@@ -167,9 +171,50 @@ async def known_works(db, entity, native, kind, viewer):
             if not matches:
                 continue
             item = tracking_projection.media_data(media)
-            rows.append({**item, "key": f"{media.media_type.value}:{media.tmdb_id or 'local-' + str(media.id)}",
-                "roles": [role for _, role in matches], "characters": [p["character"] for p, role in matches if role == "Actor" and p.get("character")], "_metadata": {**(media.tmdb_data or {}), "runtime": media.runtime or (media.tmdb_data or {}).get("runtime"), "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
-    return merge_works(rows)
+            for credit_role in PERSON_ROLES if kind == "person" else (kind,):
+                credits = [(p, role) for p, role in matches if accepted_role(credit_role, role == "Actor")]
+                if credits:
+                    rows.append({**item, "key": f"{media.media_type.value}:{media.tmdb_id or 'local-' + str(media.id)}",
+                        "roles": [role for _, role in credits],
+                        "characters": [p["character"] for p, role in credits if role == "Actor" and p.get("character")],
+                        "_credit_role": credit_role,
+                        "_metadata": {**(media.tmdb_data or {}), "runtime": media.runtime or (media.tmdb_data or {}).get("runtime"),
+                                      "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
+    return rows if kind == "person" else merge_works(rows)
+
+
+def remote_person_works(profile, kind):
+    credits = profile.get("combined_credits") or {}
+    rows = []
+    for role in PERSON_ROLES if kind == "person" else (kind,):
+        acting = role == 'actor'
+        for raw in credits.get("cast" if acting else "crew") or []:
+            if not isinstance(raw, dict):
+                continue
+            job = 'Actor' if acting else raw.get('job')
+            if not work_credit(job, raw.get('character')) or not acting and str(job).strip().casefold() in ACTING:
+                continue
+            if item := remote_work(raw, None, acting=acting):
+                rows.append({**item, '_credit_role': role})
+    return rows
+
+
+async def indexed_role_counts(db, entity_id):
+    if entity_id is not None:
+        row = (await db.execute(select(ContributorSearch.actor_count, ContributorSearch.staff_count,
+            ContributorSearch.game_actor_count, ContributorSearch.game_staff_count)
+            .where(ContributorSearch.entity_id == entity_id))).one_or_none()
+        if row:
+            return dict(zip(PERSON_ROLES, row[:2])), dict(zip(PERSON_ROLES, row[2:]))
+    return dict.fromkeys(PERSON_ROLES, 0), dict.fromkeys(PERSON_ROLES, 0)
+
+
+def screen_role_counts(rows):
+    works = {role: set() for role in PERSON_ROLES}
+    for row in rows:
+        identity = (row['type'], row['tmdb_id']) if row.get('tmdb_id') else row['key']
+        works[row['_credit_role']].add(identity)
+    return {role: len(identities) for role, identities in works.items()}
 
 
 async def exclude_provider_categories(db, works, exclusions):
@@ -300,7 +345,7 @@ async def resolve_contributor(db, kind, key, *, include_identities=False):
     return (entity,native,identities) if include_identities else (entity,native)
 
 
-async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
+async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False, role=None):
     from core.game_access import allowed, require
     if media_type == 'game':
         require(viewer)
@@ -309,9 +354,10 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         return None
     entity, native, identities = resolved
     games = media_type == "game"
+    unified = kind == "person"
     appearance_revision = None
     if cursor and not games:
-        if kind == 'actor' and re.fullmatch(r'appearance:[0-9]{1,19}', cursor):
+        if (kind == 'actor' or unified and role == 'actor') and re.fullmatch(r'appearance:[0-9]{1,19}', cursor):
             appearance_revision = int(cursor.removeprefix('appearance:'))
             if appearance_revision > 2**63 - 1:
                 raise ValueError('Invalid appearance cursor')
@@ -362,11 +408,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
                 if positive_id(profile.get("id")) != native:
                     raise ValueError("Provider identity mismatch")
                 if kind != "studio" and not games:
-                    field = "cast" if kind == "actor" else "crew"
-                    remote = [item for raw in (profile.get("combined_credits") or {}).get(field) or []
-                              if work_credit('Actor' if kind == 'actor' else raw.get('job'), raw.get('character'))
-                              if not (kind == "staff" and str(raw.get("job", "")).casefold() in ACTING)
-                              and (item := remote_work(raw, None, acting=kind == "actor"))]
+                    remote = remote_person_works(profile, kind)
         except Exception:
             if profile and positive_id(profile.get("id")) != native:
                 profile = {}
@@ -396,12 +438,10 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             await db.commit()
             # Restricted profiles must never become public person biographies.
             imdb_profile=imdb_state.get('profile') or {}
-    if games and entity and (company_state or imdb_state):
+    if games and entity and company_state and company_state.get('pending'):
         from core import game_bulk
-        state=company_state if kind=='studio' else imdb_state
-        namespace='igdb.company' if kind=='studio' else 'imdb.person'
-        ids=[row.external_id for row in identities if row.namespace==namespace]
-        if ids and state.get('pending'):
+        ids=[row.external_id for row in identities if row.namespace=='igdb.company']
+        if ids:
             await game_bulk.request(db,entity.id,kind,ids[0]);await db.commit()
     if not entity and not legacy and not profile.get("name") and not local:
         return None
@@ -428,6 +468,36 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         return None
     if not games and kind == "studio" and cursor and source != "local" and not profile:
         raise RuntimeError("Unable to load more studio works")
+    role_options = []
+    primary_label = None
+    if not games:
+        from models import GlobalSettings
+        settings = await db.get(GlobalSettings, 1)
+        show_anime = True if settings is None else settings.show_anime
+        local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
+        remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
+    if unified:
+        screen_counts, game_counts = {}, {}
+        if entity and (games or allowed(viewer)):
+            screen_counts, game_counts = await indexed_role_counts(db, entity.id)
+        if not games:
+            screen_counts = screen_role_counts(local + remote)
+        counts = {mode: screen_counts.get(mode, 0) + game_counts.get(mode, 0) for mode in PERSON_ROLES}
+        role_options = [mode for mode in PERSON_ROLES if counts[mode]]
+        department = attrs.get('known_for_department')
+        primary_label = primary_profession(department)[1]
+        portfolio = game_counts if games else screen_counts
+        kind = role or preferred_role(department, counts)
+        if not role and not portfolio.get(kind) and any(portfolio.values()):
+            kind = max(PERSON_ROLES, key=lambda mode: portfolio.get(mode, 0))
+        if not games:
+            local = [row for row in local if row['_credit_role'] == kind]
+            remote = [row for row in remote if row['_credit_role'] == kind]
+    if games and entity and imdb_state and imdb_state.get('pending'):
+        from core import game_bulk
+        if ids := [row.external_id for row in identities if row.namespace == 'imdb.person']:
+            await game_bulk.request(db, entity.id, kind, ids[0])
+            await db.commit()
     game_result = None
     if games:
         from core.game_contributor_works import works_page
@@ -447,12 +517,6 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
             share_summary = {'games': game_result['known_works'], 'background': latest.get('backdrop') or latest.get('poster')}
     else:
-        # The caller supplies the current instance preference, including when metadata is offline.
-        from models import GlobalSettings
-        settings = await db.get(GlobalSettings, 1)
-        show_anime = True if settings is None else settings.show_anime
-        local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
-        remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
         filters = await result_filters(db, viewer)
         all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
                      if matches_result_filters(r.get("_metadata") or {}, r["type"], **filters)]
@@ -529,6 +593,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     from core.studio_names import studio_name
     name = studio_display_name(native, studio_name(name)) if kind == 'studio' else name
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
+        **({'role_options': role_options, 'primary_label': primary_label} if unified else {}),
         "banner": banner,
         "image": profile_image,
         "description": description, "birthday": attrs.get("birthday"), "deathday": attrs.get("deathday"),

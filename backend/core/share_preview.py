@@ -40,7 +40,7 @@ def target(path):
     if match := re.fullmatch(r'/(actors|person|studio)/((?:catalogue|tmdb):[1-9][0-9]{0,9}|[1-9][0-9]{0,9})/?', path):
         key = match[2] if ':' in match[2] else 'tmdb:' + match[2]
         if int(key.split(':')[1]) <= 2147483647:
-            kind = {'actors':'actor', 'person':'staff', 'studio':'studio'}[match[1]]
+            kind = {'actors':'actor', 'person':'person', 'studio':'studio'}[match[1]]
             return ('game_' + kind if games else kind), key
     raise HTTPException(404, 'Preview not found')
 
@@ -184,7 +184,7 @@ async def card_data(db, path):
         stats = ([{'value':str(years), 'label':'Age at death' if data.get('deathday') else 'Age'}] if years is not None else [])
         stats += ([{'value':str(summary['games']), 'label':'Known games'}] if game_contributor else
             [{'value':str(summary['movies']), 'label':'Movies'}, {'value':str(summary['series']), 'label':'Series'}])
-        card = dict(kind=kind, title=data['name'], eyebrow=' · '.join(data['roles'][:3]) or ('Studio' if kind == 'studio' else 'Actor' if kind == 'actor' else data.get('department') or 'Staff'),
+        card = dict(kind=kind, title=data['name'], eyebrow=data.get('primary_label') or ' · '.join(data['roles'][:3]) or ('Studio' if kind == 'studio' else 'Actor' if data['kind'] == 'actor' else data.get('department') or 'Person'),
                     subtitle='', stats=stats, primary=data.get('image'),
                     background=game_preview_artwork(summary['background'], landscape=True) if game_contributor else summary['background'])
     return card, avatar

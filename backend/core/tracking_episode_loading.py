@@ -107,7 +107,7 @@ async def _load(engine, media_id, viewer_id):
         return state(ready, error='episode_metadata_unavailable', delay=60)
 
 
-async def ensure(db, media, viewer_id, *, wait_for_refresh=False):
+async def ensure(db, media, viewer_id, *, wait_for_refresh=False, wait_timeout=None):
     """A cancelled subscriber never cancels acquisition needed by another page."""
     if fresh(media):
         return {'state': 'ready', 'ready': True, 'pending': False}
@@ -134,7 +134,10 @@ async def ensure(db, media, viewer_id, *, wait_for_refresh=False):
     await db.commit()  # Never hold the subscriber's SQL connection while waiting.
     if ready and not wait_for_refresh:
         return {**state(True), 'waitable': True}
-    return await asyncio.shield(task)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), wait_timeout)
+    except TimeoutError:
+        return state(ready)
 
 
 async def close():

@@ -36,8 +36,8 @@ export function mountQuickSearch() {
   const showMoviesSeries=()=>dialog.dataset.showMoviesSeries!=='false';
   const showGames=()=>dialog.dataset.showGames!=='false';
   const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
-    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'game',label:'Games'}, {kind:'actor',label:'Actors'},
-    {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
+    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'game',label:'Games'},
+    {kind:'people',label:'People'}, {kind:'studio',label:'Studios'},
   ];
   let activeTab:SearchSection=combined()?'all':'movie';
   const tabTitle=dialog.querySelector<HTMLElement>('[data-search-tab-title]')!;
@@ -74,7 +74,7 @@ export function mountQuickSearch() {
   let progressTimer = 0;
   let revealed = false;
   let latest = { all: [] as MediaSearchResult[], movie: [] as MediaSearchResult[], series: [] as MediaSearchResult[], game: [] as GameSearchResult[] };
-  let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
+  let contributors:Record<'people'|'studio',ContributorResult[]>={people:[],studio:[]};
   let failed = false;
   let partialCoverage = false;
   const pending = new Set<SearchSection>();
@@ -85,7 +85,7 @@ export function mountQuickSearch() {
     dialog.toggleAttribute('data-search-phone', mobile.matches);
     input!.placeholder = mobile.matches ? 'Search titles, people, studios…' : 'Search titles, people and studios…';
   };
-  const resultCounts=()=>({all:latest.all.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
+  const resultCounts=()=>({all:latest.all.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,people:contributors.people.length,studio:contributors.studio.length});
   const availableTabs=()=>revealed ? availableQuickSearchTabs(panelOrder(),resultCounts(),pending) : panelOrder();
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
@@ -162,7 +162,7 @@ export function mountQuickSearch() {
     row.append(link, add);
     return row;
   }
-  function contributorNode(kind:'actor'|'staff'|'studio', item:ContributorResult) {
+  function contributorNode(kind:SearchSection, item:ContributorResult) {
     const row=document.createElement('div');row.className=`quick-search-result quick-search-contributor ${kind==='studio'?'quick-search-studio':''}`;
     const link=document.createElement('a');link.className='quick-search-result-link';link.href=item.url;
     const art=responsiveArtwork(item.image,{size:'w92',sizes:'48px',route:'auto'});
@@ -179,7 +179,7 @@ export function mountQuickSearch() {
   }
   function syncPanel(content: typeof panelContent[number], animateChange: boolean) {
     const {panel, target, kind, skeleton, secondRow, rows} = content;
-    const people = kind === 'actor' || kind === 'staff' || kind === 'studio';
+    const people = kind === 'people' || kind === 'studio';
     const items = people ? contributors[kind] : latest[kind].slice(0, RESULT_LIMIT);
     const signatures = items.map(item => JSON.stringify(item));
     const wanted = new Set(signatures);
@@ -194,7 +194,7 @@ export function mountQuickSearch() {
       const signature = signatures[index];
       let row = rows.get(signature);
       if (!row) {
-        row = 'roles' in item ? contributorNode(kind as 'actor' | 'staff' | 'studio', item) : resultNode(item);
+        row = 'roles' in item ? contributorNode(kind, item) : resultNode(item);
         rows.set(signature, row);
         if (animateChange) row.animate({opacity: [.4, 1]}, {duration: 160, easing: 'ease-out'});
       }
@@ -263,7 +263,11 @@ export function mountQuickSearch() {
       ? available.length ? 'Some search results are unavailable.' : 'Search is unavailable. Try again.'
       : available.length ? '' : partialCoverage ? 'Some matches could not be verified.' : 'No matching results.';
     showState(message);
-    const summary = visible.filter(kind => counts[kind]).map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
+    const summary = visible.filter(kind => counts[kind]).map(kind => {
+      const count = counts[kind];
+      const category = kind === 'all' ? 'movie and series' : kind === 'people' && count === 1 ? 'person' : kind;
+      return `${count} ${category} ${count === 1 ? 'result' : 'results'}`;
+    }).join(', ');
     const status = summary || (pending.size ? 'Searching.' : '');
     if (announcement && announcement.textContent !== status) announcement.textContent = status;
   }
@@ -305,7 +309,7 @@ export function mountQuickSearch() {
   function prepareSearch(retainResults = true) {
     stopSearch();
     latest = {all: [], movie: [], series: [], game: []};
-    contributors = {actor: [], staff: [], studio: []};
+    contributors = {people: [], studio: []};
     failed = false;
     partialCoverage = false;
     const query = input?.value.trim() || '';
@@ -363,7 +367,7 @@ export function mountQuickSearch() {
     })();
 
     await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors' || request.kind === 'game').map(async request => {
-      const sections: SearchSection[] = request.kind === 'game' ? ['game'] : request.scope === 'studio' ? ['studio'] : ['actor', 'staff'];
+      const sections: SearchSection[] = request.kind === 'game' ? ['game'] : [request.scope ?? 'people'];
       let unavailable = false, incomplete = false;
       try {
         await searchReader.read(request, current.signal, data => {

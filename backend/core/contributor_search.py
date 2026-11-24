@@ -1,6 +1,8 @@
 """Bounded quick-search discovery using canonical contributors and existing providers."""
 import asyncio
 import hashlib
+import re
+import unicodedata
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -9,10 +11,12 @@ from sqlalchemy.orm import load_only
 
 from core import settings_store, tmdb
 from core.contributor_details import is_actor, positive_id
+from core.contributor_roles import preferred_role, primary_profession
 from core.credit_roles import work_credit
 from core.person_identities import canonical_people
 from core.game_company_discovery import discover_companies
 from core.game_people_discovery import discover_people
+from core.game_search import matches_partial
 from core.principal_credits import remote_person_kind, number, group
 from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
@@ -27,15 +31,40 @@ KINDS = ('actor', 'staff', 'studio')
 PATHS = {'actor': 'actors', 'staff': 'person', 'studio': 'studio'}
 LIMIT = 8
 MAX_CANDIDATES = 8
+PEOPLE_POPULARITY_FLOOR = 0.1
 # Keep keystroke-triggered sorting from occupying the shared VPS's entire
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
+_PERSON_NAME = re.compile(r"[^\W_]+(?:[’'-][^\W_]+)*(?:\s+[^\W_]+(?:[’'-][^\W_]+)*)*")
+
+
+def person_name_spelling(name):
+    return ' '.join(re.findall(r'[^\W_]+', unicodedata.normalize('NFC', name).casefold()))
+
+
+async def name_candidates(db, statement, predicate, ordering, term, *, recover_typos):
+    rows = (await db.execute(statement.where(predicate).order_by(*ordering).limit(80))).all()
+    if rows or not recover_typos or len(term) < 5 or not _PERSON_NAME.fullmatch(term):
+        return rows
+
+    # Use the existing partial trigram index only after a literal miss. A
+    # bounded name check rejects nearby trigram hits with unrelated words.
+    text = ContributorSearch.search_text
+    similarity = func.strict_word_similarity(term, text).label('typo_similarity')
+    close = (await db.execute(statement.add_columns(text, similarity)
+        .where(text.bool_op('%>>')(term)).order_by(similarity.desc(), *ordering).limit(16))).all()
+    return [row for row in close if matches_partial(term, row.search_text)]
 
 
 def result(person, kind, roles=(), key=None):
     return {'key': key or f'catalogue:{person.id}', 'name': studio_name(person.name) if kind == 'studio' else person.name,
             'image': person.image_url, 'roles': sorted(set(roles), key=lambda label: (role_order(label), label))[:2],
             'url': f'/{PATHS[kind]}/{key or f"catalogue:{person.id}"}'}
+
+
+def search_department(summary):
+    return select(CatalogueEntity.attributes['known_for_department'].astext).where(
+        CatalogueEntity.id == summary.entity_id).scalar_subquery().label('department')
 
 
 def credit_kind(person, credit):
@@ -55,23 +84,27 @@ async def local_matches(db, term, kind):
 
 async def _local_matches(db, term, kind):
     # Counts and roles are maintained when credits change, never aggregated on
-    # each keystroke. This read does not touch source credits or entity JSON.
+    # each keystroke. People also read just the public department scalar.
     pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
     summary = ContributorSearch
     members = matching_studio_members(term) if kind in ('all', 'studio') else ()
     branded_ids = select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace == 'tmdb.company',
         CatalogueIdentity.external_id.in_([str(i) for i in members]))
     count = summary.actor_count if kind == 'actor' else summary.staff_count if kind == 'staff' else summary.work_count
-    matches = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
-        count.label('work_count'), summary.roles,
+    person_fields = (summary.actor_count, summary.staff_count, search_department(summary)) if kind == 'people' else ()
+    statement = select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+        count.label('work_count'), summary.roles, *person_fields,
         select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id == summary.entity_id,
             CatalogueIdentity.namespace == case((summary.kind == 'organization', 'tmdb.company'), else_='tmdb.person'))
             .order_by(CatalogueIdentity.external_id).limit(1).scalar_subquery().label('tmdb_id')).where(
         summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
-        or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
         summary.work_count > 0, count > 0,
-    ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
-               count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
+    )
+    ordering = (case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+                count.desc(), func.lower(summary.name), summary.entity_id)
+    matches = await name_candidates(db, statement,
+        or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
+        ordering, term, recover_typos=kind in ('people', 'actor', 'staff'))
     groups = {k: [] for k in KINDS}
     for row in matches:
         person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
@@ -83,27 +116,32 @@ async def _local_matches(db, term, kind):
                 roles[section].add(role_label(credit))
         for section, labels in roles.items():
             groups[section].append({**result(person, section, labels), '_works': row.work_count,
-                '_native': positive_id(row.tmdb_id)})
+                '_native': positive_id(row.tmdb_id), **({'_department': row.department,
+                    '_role_works': row.actor_count if section == 'actor' else row.staff_count} if person_fields else {}),
+                **({'_typo_similarity': row.typo_similarity} if hasattr(row, 'typo_similarity') else {})})
     return groups
 
 
-async def game_matches(db, term, kind, *, candidate_ids=()):
+async def game_matches(db, term, kind, *, candidate_ids=(), recover_typos=True):
     """Read fresh verified game summaries; never scan careers per keystroke."""
     from core.game_contributor_works import ACTING, COMPANIES
     summary = ContributorSearch
     pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
     count = summary.game_actor_count if kind == 'actor' else summary.game_staff_count if kind == 'staff' else summary.game_work_count
+    person_fields = (search_department(summary),) if kind == 'people' else ()
+    statement = select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+        summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles, *person_fields,
+        select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
+            CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
+        summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
+        summary.game_work_count > 0, count > 0,
+    )
+    ordering = (case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+                count.desc(), func.lower(summary.name), summary.entity_id)
     async with _local_search_slots:
-        rows = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
-            summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles,
-            select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
-                CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
-            summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
-            summary.game_work_count > 0, count > 0,
-            or_(summary.search_text.ilike(pattern, escape='\\'),
-                summary.entity_id.in_(candidate_ids) if candidate_ids else False),
-        ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
-            count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
+        rows = await name_candidates(db, statement, or_(summary.search_text.ilike(pattern, escape='\\'),
+            summary.entity_id.in_(candidate_ids) if candidate_ids else False), ordering, term,
+            recover_typos=recover_typos and kind in ('people', 'actor', 'staff'))
     groups = {section: [] for section in KINDS}
     for row in rows:
         person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
@@ -116,7 +154,8 @@ async def game_matches(db, term, kind, *, candidate_ids=()):
             works = row.game_actor_count if section == 'actor' else row.game_staff_count if section == 'staff' else row.game_work_count
             item = result(person, section, labels)
             groups[section].append({**item, 'url': item['url'] + '?media_type=game', '_works': works,
-                '_native':positive_id(row.tmdb_id)})
+                '_native':positive_id(row.tmdb_id), **({'_department': row.department, '_role_works': works} if person_fields else {}),
+                **({'_typo_similarity': row.typo_similarity} if hasattr(row, 'typo_similarity') else {})})
     return groups
 
 
@@ -140,22 +179,71 @@ def merge_game_matches(groups, games):
                 item['roles'] = sorted(set(item.get('roles', ())) | set(row['roles']), key=lambda label:(role_order(label),label))[:2]
                 item['_works'] = item.get('_works', 0) + row['_works']
                 item['image'] = (row.get('image') or item.get('image')) if provider_candidate else row.get('image')
+                if '_role_works' in item or '_role_works' in row:
+                    item['_role_works'] = item.get('_role_works', 0) + row.get('_role_works', row['_works'])
+                if not item.get('_department') and row.get('_department'):
+                    item['_department'] = row['_department']
     return groups
 
 
-def ranked_results(groups, term):
+def ranked_results(groups, term, *, people=False, people_pending=False):
     query = term.casefold()
+    spelling = person_name_spelling(term) if people else ''
+    def exact_person(item):
+        return spelling and (item.get('_exact_name') or person_name_spelling(item['name']) == spelling)
+
     def rank(item, section):
         name = item.get('name', '').casefold()
-        match = 0 if name == query else 1 if name.startswith(query) else 2
+        similarity = item.get('_typo_similarity', 0)
+        match = 0 if name == query or exact_person(item) else 1 if name.startswith(query) else 3 if similarity else 2
         recognition = number(item.get('_popularity'))
         works = item.get('_works', 0)
         if section == 'studio':
             recent = int((item.get('_latest') or '0').replace('-', ''))
             return (match, -recognition, -works, -recent, not bool(item.get('image')), name, item['key'])
-        return (match, -works if section == 'studio' else -recognition,
-                -recognition if section == 'studio' else -works,
-                not bool(item.get('image')), name, item['key'])
+        return (match, -similarity, -recognition, -works, not bool(item.get('image')), name, item['key'])
+    if people:
+        candidates = [(section, row) for section in ('actor', 'staff') for row in groups[section]]
+        canonical = {row['_native']: row['key'] for _, row in candidates
+                     if row.get('_native') and row['key'].startswith('catalogue:')}
+        by_person = defaultdict(list)
+        for section, row in sorted(candidates, key=lambda pair: rank(pair[1], pair[0])):
+            by_person[canonical.get(row.get('_native'), row['key'])].append((section, row))
+        ordered = list(by_person.items())
+        exact = {key for key, matches in ordered if any(exact_person(row) for _, row in matches)}
+        # A local typo recovery cannot make a verified exact name a fallback.
+        if exact:
+            ordered = [(key, matches) for key, matches in ordered
+                       if key in exact or any(not row.get('_typo_similarity') for _, row in matches)]
+        primary = set()
+        for key, matches in ordered:
+            popularity = max((row['_popularity'] for _, row in matches if row.get('_popularity') is not None),
+                             default=PEOPLE_POPULARITY_FLOOR)
+            if popularity >= PEOPLE_POPULARITY_FLOOR:
+                primary.add(key)
+        # Wait for the existing verification to settle before opening the fallback.
+        if not primary and not people_pending:
+            visible = ordered
+        else:
+            if not people_pending and primary.isdisjoint(exact):
+                primary.update(exact)
+            visible = [(key, matches) for key, matches in ordered if key in primary]
+        cards = []
+        for key, matches in visible[:LIMIT]:
+            best_role, best = matches[0]
+            department = next((row['_department'] for _, row in matches if primary_profession(row.get('_department'))[0]), None)
+            counts = {role: max((row.get('_role_works', row.get('_works', 0)) for section, row in matches
+                                if section == role), default=0) for role in ('actor', 'staff')}
+            role = preferred_role(department, counts, fallback=best_role)
+            label = primary_profession(department)[1]
+            if not label:
+                label = 'Actor' if role == 'actor' else next(
+                    (row['roles'][0] for section, row in matches if section == role and row['roles']), None)
+            game_only = all(row['url'].endswith('?media_type=game') for _, row in matches)
+            cards.append({'key': key, 'name': best['name'],
+                'image': next((row['image'] for _, row in matches if row.get('image')), None),
+                'roles': [label] if label else [], 'url': f'/person/{key}' + ('?media_type=game' if game_only else '')})
+        return {'people': cards}
     return {section: [{key: value for key, value in item.items() if not key.startswith('_')}
                      for item in sorted(rows, key=lambda item: rank(item, section))[:LIMIT]]
             for section, rows in groups.items()}
@@ -253,23 +341,30 @@ async def _discover_candidates(db, viewer, term, kind, key):
     roots = await canonical_people(db, [person for _, person in mappings], lightweight=True)
     known = {(identity.namespace, identity.external_id): roots[person.id] for identity, person in mappings}
     seen = {section: {row['key'] for row in rows} for section, rows in groups.items()}
+    spelling = person_name_spelling(term) if kind == 'people' else ''
     for provider_kind, raw in sources:
         native = positive_id(raw.get('id'))
         if not native or not raw.get('name') or raw.get('adult'):
             continue
-        section = 'studio' if provider_kind == 'company' else remote_person_kind(raw)
+        exact_name = bool(spelling) and any(person_name_spelling(name) == spelling
+            for name in (raw['name'], raw.get('original_name')) if name)
+        section = 'studio' if provider_kind == 'company' else remote_person_kind(raw, exact_name=exact_name)
         if section is None:
             continue
         if kind not in ('all', 'people') and section != kind:
             continue
         person = known.get((f'tmdb.{provider_kind}', str(native)))
         identity = f'catalogue:{person.id}' if person else f'tmdb:{native}'
+        popularity = number(raw['popularity']) if raw.get('popularity') is not None else None
         if identity in seen[section]:
             for item in groups[section]:
                 if item['key'] == identity:
-                    item['_popularity'] = number(raw.get('popularity'))
+                    item['_popularity'] = popularity
                     item['_native'] = item.get('_native') or native
                     if section != 'studio': item['_known_for'] = raw.get('known_for') or []
+                    if exact_name: item['_exact_name'] = True
+                    if kind == 'people' and not primary_profession(item.get('_department'))[0]:
+                        item['_department'] = raw.get('known_for_department')
             continue
         if person:
             item = result(person, section)
@@ -278,8 +373,9 @@ async def _discover_candidates(db, viewer, term, kind, key):
             item = {'key': identity, 'name': studio_name(raw['name']) if section == 'studio' else raw['name'], 'image': f'https://image.tmdb.org/t/p/w185{image}' if image else None,
                     'roles': [] if section == 'studio' else [raw.get('known_for_department') or 'Crew'],
                     'url': f'/{PATHS[section]}/{identity}'}
-        groups[section].append({**item, '_popularity': number(raw.get('popularity')),
-            '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {})})
+        groups[section].append({**item, '_popularity': popularity,
+            '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {}),
+            **({'_department': raw.get('known_for_department'), '_exact_name': exact_name} if kind == 'people' else {})})
         seen[section].add(identity)
     return groups, failed
 
@@ -331,7 +427,7 @@ async def settle_game_discovery(db,groups,people,companies):
         await db.commit()
 
 
-async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
+async def search_contributors(db, viewer, term, kind='all', work_domain='all', *, group_people=False):
     from core.game_access import allowed, require
     from core.game_search_samples import sample_matches
     sections = {section:False for section in KINDS}
@@ -341,10 +437,15 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         groups = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'])
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
         await settle_game_discovery(db,groups,people,companies)
-        return {'results': ranked_results(groups, term), 'partial': companies['partial'] or people['partial'],
+        pending_sections = {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']}
+        if group_people:
+            pending_sections = {'people': pending_sections['actor'] or pending_sections['staff']}
+        return {'results': ranked_results(groups, term, people=group_people,
+                                          people_pending=pending_sections.get('people', False)),
+            'partial': companies['partial'] or people['partial'],
             'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
-            'section_pending': {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']},
+            'section_pending': pending_sections,
             **({'retry_after': 2 if companies['pending'] else people.get('retry_after', 2)} if companies['pending'] or people['pending'] else {})}
     if not allowed(viewer):
         work_domain = 'movies_series'
@@ -359,14 +460,19 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
             discover_companies(db, term, kind, progressive=True),
             discover_people(db, term, kind, progressive=True))
         groups, failed, pending = screen
-        groups = merge_game_matches(groups, await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids']))
+        game_results = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'],
+            recover_typos=not (groups['actor'] or groups['staff'] or sections['actor'] or sections['staff']))
+        groups = merge_game_matches(groups, game_results)
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
         await settle_game_discovery(db,groups,people,companies)
     else:
         groups, failed, pending = await screen_matches(db, viewer, term, kind, sections)
     sections = {section: sections[section] or (companies['pending'] if section == 'studio' else
         people.get('pending_sections', {}).get(section, people['pending'])) for section in KINDS}
-    return {'results': ranked_results(groups, term), 'partial': failed or companies['partial'] or people['partial'],
+    if group_people:
+        sections = {'people': sections['actor'] or sections['staff']}
+    return {'results': ranked_results(groups, term, people=group_people, people_pending=sections.get('people', False)),
+            'partial': failed or companies['partial'] or people['partial'],
             'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending':pending or companies['pending'] or people['pending'],
             'section_pending':sections,

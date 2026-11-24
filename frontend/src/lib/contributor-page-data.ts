@@ -35,6 +35,7 @@ export interface ContributorPage {
   birthday: string | null; deathday: string | null; place_of_birth: string | null; department: string | null;
   aliases: string[]; countries: string[]; headquarters: string | null; links: {label:string;href:string}[];
   roles: string[]; works: ContributorWork[]; known_works: number; list_count: number | null;
+  role_options?: ('actor' | 'staff')[]; primary_label?: string;
   total: number | null; page: number; has_more: boolean; next_cursor: string | null; source: 'local' | 'provider'; notice: string | null;
   game_person_status?:import('./contributor-source-refresh').GamePersonStatus|null;
   game_company_status?:import('./contributor-source-refresh').GamePersonStatus|null;
@@ -46,6 +47,8 @@ export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   else if (type === 'all' || type === 'movie' || type === 'series') params.set('media_type', type);
   const list = search.get('list_scope');
   if (signedIn && list === 'in') params.set('list_scope', list);
+  const role = search.get('role');
+  if (role === 'actor' || role === 'staff') params.set('role', role);
   const page = Number(search.get('page'));
   if (Number.isInteger(page) && page > 1 && page <= 500) params.set('page', String(page));
   if (search.get('cursor')) params.set('cursor', search.get('cursor')!.slice(0,400));

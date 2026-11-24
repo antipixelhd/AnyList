@@ -22,6 +22,7 @@ import {createContributorWorksMotion, orderContributorNodes} from './contributor
 import {mountContributorBanner} from './contributor-banner';
 import {replaceContributorSelection} from './contributor-selection';
 import {mountContributorAppearances, paintWorkAppearance} from './contributor-appearances';
+import {mountContributorEpisodeCredits} from './contributor-episode-credits';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -29,7 +30,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   mountPortraitViewer(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
-  if (data.kind === 'actor') mountContributorAppearances(region, signal);
+  const isPerson = data.kind !== 'studio';
+  if (isPerson) mountContributorAppearances(region, signal);
+  const cancelEpisodeCredits = isPerson ? mountContributorEpisodeCredits(region, data.key, signal) : undefined;
   const switchView = createContentTransition(region, signal);
   const worksMotion = createContributorWorksMotion(region, signal);
   let requestedView = root.dataset.view;
@@ -71,12 +74,20 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     caption.title=caption.textContent;caption.toggleAttribute('data-character-pending',!!item.characters_pending&&!item.characters.length);
   };
   let availabilityChanged=(_state:string)=>{};
-  if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,domains=>{
-    form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]').forEach(input=>{
-      input.disabled=disabledContributorOption(input.name,input.value,domains);
+  let availabilityController:AbortController|undefined;
+  const refreshAvailability=()=>{
+    if(root.dataset.contributorAvailability!=='true')return;
+    availabilityController?.abort();
+    availabilityController=new AbortController();
+    const mediaInputs=form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]');
+    for(const input of mediaInputs)input.disabled=false;
+    const endpoint=root.dataset.endpoint!.replace('contributors/person/',`contributors/${data.kind}/`);
+    contributorAvailability(endpoint,data.key,AbortSignal.any([signal,availabilityController.signal]),domains=>{
+      for(const input of mediaInputs)input.disabled=disabledContributorOption(input.name,input.value,domains);
+      availabilityChanged(JSON.stringify(domains));
     });
-    availabilityChanged(JSON.stringify(domains));
-  });
+  };
+  refreshAvailability();
   const paintBanner=mountContributorBanner(root.querySelector<HTMLImageElement>('[data-contributor-banner]')!,signal);
   const updateBanner=()=>paintBanner([...region.querySelectorAll<HTMLElement>('[data-work-key]')]
     .filter(card=>!card.hidden).map(card=>items.get(card)!).filter(Boolean),data.kind==='studio'?data.banner:null);
@@ -98,6 +109,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const type=params.get('media_type')||'all';
     form.querySelectorAll<HTMLInputElement>('[name=domain]').forEach(input=>input.checked=input.value===(type==='game'?'game':'movies-series'));
     form.querySelectorAll<HTMLInputElement>('[name=media_type]').forEach(input=>input.checked=input.value===(type==='game'?'all':type));
+    form.querySelectorAll<HTMLInputElement>('[name=role]').forEach(input=>input.checked=input.value===data.kind);
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
     if(scope)scope.checked=params.get('list_scope')==='in';
     paintListButton();
@@ -122,9 +134,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const works = root.querySelector<HTMLElement>('.contributor-works');
     if (works) scrollToWorks(works);
   },{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
-    button.addEventListener('click', () => {
-      const view = button.dataset.contributorView!;
+  const compact=root.querySelector<HTMLInputElement>('[data-contributor-compact]');
+  const paintLayoutControls=()=>{
+    if(compact)compact.checked=requestedView==='grid';
+    root.querySelectorAll<HTMLElement>('[data-contributor-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.contributorView===requestedView)));
+  };
+  const changeLayout=(view:string)=>{
       if (requestedView === view) return;
       requestedView = view;
       worksMotion.cancel();
@@ -133,10 +148,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         region.classList.toggle('browse-grid', view === 'grid');
       });
       (form.elements.namedItem('view') as HTMLInputElement).value = view;
-      root.querySelectorAll('[data-contributor-view]').forEach(other => other.setAttribute('aria-pressed', String((other as HTMLElement).dataset.contributorView === view)));
+      paintLayoutControls();
       const url = new URL(location.href); url.searchParams.set('view', view);
       history.replaceState(history.state, '', url);
-    }, {signal});
+  };
+  compact?.addEventListener('change',()=>changeLayout(compact.checked?'grid':'timeline'),{signal});
+  root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
+    button.addEventListener('click',()=>changeLayout(button.dataset.contributorView!),{signal});
   });
   const showError = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
   const visible = (item: ContributorWork) => params.get('list_scope') !== 'in' || !!item.list_status;
@@ -163,6 +181,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   const mount = (card: HTMLElement, item: ContributorWork) => {
     items.set(card, item);
+    const episodes=card.querySelector<HTMLDetailsElement>('[data-contributor-episodes]');
+    if(episodes){
+      episodes.hidden=data.kind!=='staff'||item.type!=='series'||!item.tmdb_id;
+      if(!episodes.hidden)episodes.dataset.series=String(item.tmdb_id);
+    }
     if (item.type !== 'game' && data.list_count !== null && (item.id || item.tmdb_id)) editorStore.seed(item);
     paint(card, item);
     const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
@@ -246,7 +269,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const sourceRefresh=contributorSourceRefresh(signal,available=>{
     if(available)syncSource();
     },data.kind==='studio'?undefined:{
-    kind:data.kind,ids:()=>[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!),
+    get kind(){return data.kind==='staff'?'staff':'actor';},
+    ids:()=>[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!),
     apply:rows=>{
       const captions=new Map(rows.map(row=>[row.id,row]));
       for(const [card,item] of items){
@@ -321,13 +345,15 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   type RetainedWorks={nodes:Node[];items:Map<HTMLElement,ContributorWork>;data:ContributorPage;params:URLSearchParams;view:string|undefined};
   const retained=new Map<string,RetainedWorks>();
   let retainCurrent=true;
-  const domain=()=>params.get('media_type')==='game'?'game':'movies-series';
+  const domain=(query:URLSearchParams)=>query.get('media_type')==='game'?'game':'movies-series';
+  const retainedKey=(query:URLSearchParams)=>`${query.get('role')||''}:${domain(query)}`;
   const invalidateRetained=()=>{retained.clear();retainCurrent=false;};
   document.addEventListener('anylist:cache-invalidated',invalidateRetained,{signal});
   document.addEventListener('anylist:editor-state',invalidateRetained,{signal});
   signal.addEventListener('abort',()=>retained.clear(),{once:true});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();switchView.cancel();
+    cancelEpisodeCredits?.();
     paintListButton();
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
@@ -342,9 +368,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     // the viewer changes another filter, without forcing a route switch.
     form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
     let query=contributorParams(submitted,data.list_count!==null);
-    const switching=(query.get('media_type')==='game'?'game':'movies-series')!==domain();
-    const cached=switching?retained.get(query.get('media_type')==='game'?'game':'movies-series'):undefined;
-    if(switching&&retainCurrent&&!syncing)retained.set(domain(),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView});
+    const switching=domain(query)!==domain(params);
+    const cached=switching?retained.get(retainedKey(query)):undefined;
+    if(switching&&retainCurrent&&!syncing)retained.set(retainedKey(params),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView});
     if(cached){query=new URLSearchParams(cached.params);requestedView=cached.view;}
     region.hidden=false;region.inert=true;
     const readSelection=async()=>{
@@ -366,6 +392,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           // Replace only the works; keep biography, controls, focus and viewport intact.
           region.replaceChildren(...(cached?.nodes||[]));items.clear();
           if(cached)for(const [card,item] of cached.items)items.set(card,item);
+          const roleChanged=next.kind!==data.kind;
           Object.assign(data,next);
           for(const key of [...params.keys()])params.delete(key);
           query.forEach((value,key)=>params.set(key,value));
@@ -374,14 +401,22 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           sourceRefresh.update(params.get('media_type')==='game'?next.game_company_status||next.game_person_status:null);
           const count=root.querySelector('[data-contributor-list-count]');
           if(count)count.textContent=String(data.list_count||0);
-          const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
-          roles.textContent=data.roles.slice(0,4).join(' / ');roles.hidden=!data.roles.length;
-          if(data.kind==='studio')root.querySelector('[data-contributor-kicker]')!.textContent=params.get('media_type')==='game'?'Game studio':'Production studio';
+          const kicker=root.querySelector<HTMLElement>('[data-contributor-kicker]')!;
+          if(isPerson){
+            kicker.textContent=next.primary_label||'';
+            kicker.hidden=!next.primary_label;
+            form.querySelector<HTMLElement>('[data-contributor-credit-roles]')!.hidden=!next.role_options?.some(role=>role!==next.kind);
+            if(roleChanged){previousAvailability='';refreshAvailability();}
+          }else{
+            const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
+            roles.textContent=data.roles.slice(0,4).join(' / ');roles.hidden=!data.roles.length;
+            kicker.textContent=domain(params)==='game'?'Game studio':'Production studio';
+          }
           const listLink=root.querySelector<HTMLAnchorElement>('.contributor-list-link');
           if(listLink){const href=new URL(location.pathname,location.origin);href.search=query.toString();href.searchParams.set('list_scope','in');href.searchParams.set('view',requestedView||'timeline');href.hash='contributor-works';listLink.href=href.href;}
           if(!cached)append(next.works);
           retainCurrent=true;
-          if(cached){restoreFilterControls();root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';root.querySelectorAll<HTMLElement>('[data-contributor-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.contributorView===requestedView)));}
+          if(cached){restoreFilterControls();root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';paintLayoutControls();}
           more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
           const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
           notice.textContent=next.notice||'';notice.hidden=!next.notice;
@@ -464,6 +499,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       data.total=next.total;data.list_count=next.list_count;data.known_works=next.known_works;
+      if(isPerson)form.querySelector<HTMLElement>('[data-contributor-credit-roles]')!.hidden=!next.role_options?.some(role=>role!==next.kind);
       const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
       more.hidden=!data.has_more;updateEmpty();
       animateWorks();

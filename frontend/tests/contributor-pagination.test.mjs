@@ -5,6 +5,9 @@ import {stripTypeScriptTypes} from 'node:module';
 import vm from 'node:vm';
 import {contributorPages} from '../src/lib/contributor-pages.ts';
 
+const domain=query=>query.get('media_type')==='game'?'game':'movies-series';
+const retainedKey=query=>`${query.get('role')||''}:${domain(query)}`;
+
 test('a failed replacement filter restores pagination and ignores the older page', async () => {
   const source=readFileSync(new URL('../src/lib/contributor-page.ts',import.meta.url),'utf8');
   const pagination=source.slice(source.indexOf("  root.querySelector<HTMLElement>('[data-contributor-next]')"),source.indexOf('  let syncing='));
@@ -19,7 +22,7 @@ test('a failed replacement filter restores pagination and ignores the older page
     contributorSourceRefresh:()=>({update(){},stop(){}}),
     contributorPages,updateEmpty(){},
     form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>{handlers[name]=handler;}},
-    document:{addEventListener(){}},region,more,data,items:new Map(),
+    document:{addEventListener(){}},region,more,data,items:new Map(),cancelEpisodeCredits:undefined,
     error:{hidden:true},params:new URLSearchParams(),
     createPrediction:()=>({cancel(){},consume:async()=>null}),
     fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),
@@ -104,8 +107,8 @@ test('cache invalidation during a tab switch retries the selected domain instead
   const node={hidden:false,textContent:'',removeAttribute(){},setAttribute(){}};
   const root={dataset:{endpoint:'contributors/actor/catalogue:1',mediaType:'all'},querySelector:selector=>selector==='.contributor-list-link'?null:node};
   const context=vm.createContext({Error,DOMException,AbortController,URL,URLSearchParams,
-    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
-    form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>handlers[name]=handler},
+    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},domain,retainedKey,retained:new Map(),retainCurrent:false,syncing:false,signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},cancelEpisodeCredits:undefined,isPerson:true,
+    form:{action:'https://example.test/person/1',querySelector:()=>node,querySelectorAll:()=>[],addEventListener:(name,handler)=>handlers[name]=handler},
     FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
     params:new URLSearchParams('media_type=all'),data:{kind:'actor',list_count:0},
     scrollY:0,region:{childNodes:[],hidden:false,setAttribute(){},removeAttribute(){},replaceChildren(){}},items:new Map(),
@@ -150,21 +153,22 @@ test('returning to a contributor domain restores exact cards, filters and loaded
   const start=source.indexOf("  form.addEventListener('submit',event=>{");
   const snippet=source.slice(start,source.indexOf('  let syncing=',start));
   let submit,reads=0,restores=0;const scrolls=[],screenNode={},gameNode={},gameItem={key:'game:1'};
-  const snapshot={nodes:[gameNode],items:new Map([[gameNode,gameItem]]),params:new URLSearchParams('media_type=game&list_scope=in'),view:'grid',scroll:94,data:{works:[gameItem],roles:[],kind:'actor',list_count:2,page:3,has_more:true}};
-  const retained=new Map([['game',snapshot]]),items=new Map([[screenNode,{key:'movie:1'}]]);
+  const snapshot={nodes:[gameNode],items:new Map([[gameNode,gameItem]]),params:new URLSearchParams('media_type=game&list_scope=in&role=actor'),view:'grid',scroll:94,data:{works:[gameItem],roles:[],kind:'actor',list_count:2,page:3,has_more:true}};
+  const retained=new Map([['actor:game',snapshot],['staff:game',{nodes:[{}]}]]),items=new Map([[screenNode,{key:'movie:1'}]]);
   const node={hidden:false,textContent:'',value:'',removeAttribute(){},setAttribute(){}};
   const region={childNodes:[screenNode],classList:{toggle(){}},setAttribute(){},removeAttribute(){},replaceChildren(...nodes){this.childNodes=nodes;}};
-  const params=new URLSearchParams('media_type=movie'),data={kind:'actor',list_count:1};
+  const params=new URLSearchParams('media_type=movie&role=actor'),data={kind:'actor',list_count:1};
   const context={Error,DOMException,AbortController,URL,URLSearchParams,Map,
     switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,pages:{get(){reads++;throw new Error('Unexpected read');}},revision:0,filterRequest:undefined,prediction:{cancel(){}},
-    form:{action:'https://example.test/person/1',querySelectorAll:()=>[],elements:{namedItem:()=>node},addEventListener:(name,handler)=>submit=handler},
-    FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
-    domain:()=> 'movies-series',retained,retainCurrent:true,syncing:false,scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
+    form:{action:'https://example.test/person/1',querySelector:()=>node,querySelectorAll:()=>[],elements:{namedItem:()=>node},addEventListener:(name,handler)=>submit=handler},
+    FormData:class{forEach(fn){fn('game','media_type');fn('actor','role');}},contributorParams:query=>query,
+    domain,retainedKey,retained,retainCurrent:true,syncing:false,scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
+    cancelEpisodeCredits:undefined,isPerson:true,paintLayoutControls(){},
     params,data,region,items,error:node,root:{dataset:{endpoint:'people/1'},querySelector:selector=>selector==='.contributor-list-link'?null:node,querySelectorAll:()=>[]},
     sourceRefresh:{update(){}},more:{},requestedView:'timeline',append(){throw new Error('Cards must be retained');},updateEmpty(){},syncAgain:false,
     restoreFilterControls:()=>restores++,scrollToWorks(){},showError:message=>assert.fail(message),location:{href:'https://example.test/person/1'},history:{replaceState(){}},
   };
   vm.runInNewContext(stripTypeScriptTypes(snippet),context);submit({preventDefault(){}});await new Promise(setImmediate);
   assert.equal(reads,0);assert.equal(restores,1);assert.equal(region.childNodes[0],gameNode);assert.equal(items.get(gameNode),gameItem);
-  assert.equal(data.page,3);assert.equal(params.get('list_scope'),'in');assert.equal(retained.get('movies-series').nodes[0],screenNode);assert.deepEqual(scrolls,[],'a cached domain keeps the current viewport');
+  assert.equal(data.page,3);assert.equal(params.get('list_scope'),'in');assert.equal(retained.get('actor:movies-series').nodes[0],screenNode);assert.deepEqual(scrolls,[],'a cached domain keeps the current viewport');
 });

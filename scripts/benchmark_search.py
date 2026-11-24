@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import hashlib
 import importlib
+import inspect
 import json
 import os
 import re
@@ -922,7 +923,8 @@ async def main(args):
             ('runtime_timeout', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
             ('provider_failure', 'catalog', {'q': 'zz-no-match', 'media_type': 'movie'}),
             ('page_two', 'browse', {'q': 'Benchmark title', 'page': 2, 'source': 'remote'}),
-            ('people_combined', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'people'}),
+            ('people_combined', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'people',
+                **({'group_people': 'true'} if 'group_people' in inspect.signature(contributor_search.search_contributors).parameters else {})}),
             ('all_contributors', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'all'}),
             ('date_genre_score', 'browse', {'q': 'Benchmark title', 'genres': '18', 'min_score': 7, 'start': '2026-01-01', 'end': '2026-12-31'}),
             ('series_airing', 'browse', {'q': 'Benchmark title', 'media_type': 'series', 'status': 'airing'}),

@@ -22,7 +22,7 @@ class StaffTests(unittest.TestCase):
                               title(2, 6, minutes=300), title(3, None, minutes=0)])[0]
         self.assertEqual((group["titles"], group["minutes"], group["mean_score"], group["rated_titles"]), (3, 400, 7, 2))
         self.assertEqual(group["top_titles"][0]["roles"], ["Director", "Writer"])
-        self.assertEqual(group["href"], "/person/catalogue%3A1")
+        self.assertEqual(group["href"], "/person/catalogue%3A1?role=staff")
         self.assertIsNone(group["top_titles"][-1]["score"])
 
     def test_personal_ratings_select_twelve_and_same_name_people_stay_separate(self):

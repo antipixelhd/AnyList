@@ -1,7 +1,7 @@
 import {createBrowseCache} from './browse-cache.ts';
 import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
-export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
-export type ContributorScope = 'people'|'actor'|'staff'|'studio';
+export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'people' | 'studio';
+export type ContributorScope = 'people' | 'studio';
 export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
 function verificationPause(signal:AbortSignal, delay=1500) {
@@ -93,7 +93,11 @@ export function quickSearchRequests(query:string,region?:string,showMoviesSeries
   const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
   if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
   const work_domain=showGames?(showMoviesSeries?'all':'game'):'movies_series';
-  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope,work_domain})}`});
+  for(const scope of ['people','studio'] as const) {
+    const params=new URLSearchParams({q:query,kind:scope,work_domain});
+    if(scope==='people')params.set('group_people','true');
+    requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${params}`});
+  }
   return requests;
 }
 
@@ -145,13 +149,14 @@ export function createQuickTitleBatch<T>() {
     return settled.size === 2 ? results : undefined;
   };
 }
-export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studio',T[]>, incoming:Partial<Record<'actor'|'staff'|'studio',T[]>>, scope?:ContributorScope) {
-  return {actor:scope==='studio'||scope==='staff'?current.actor:incoming.actor||[],
-    staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
-    studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
+export function mergeContributorResults<T>(current:Record<ContributorScope,T[]>, incoming:Partial<Record<ContributorScope,T[]>>, scope?:ContributorScope) {
+  return {
+    people:scope==='studio'?current.people:incoming.people||[],
+    studio:scope==='people'?current.studio:incoming.studio||[],
+  };
 }
 export function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
-  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
+  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'people','studio'];
 }
 export function availableQuickSearchTabs(order: SearchSection[], counts: Partial<Record<SearchSection, number>>, pending: ReadonlySet<SearchSection>): SearchSection[] {
   return order.filter(kind => (counts[kind] ?? 0) > 0 || pending.has(kind));
