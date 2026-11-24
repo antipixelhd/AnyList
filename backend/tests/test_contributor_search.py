@@ -112,10 +112,10 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.company_mock.assert_not_called()
         self.people_mock.assert_awaited_once()
 
-    async def test_grouped_people_hide_low_popularity_when_other_results_exist(self):
+    async def test_grouped_people_hide_low_popularity_when_a_popular_exact_match_exists(self):
         self.people_mock.return_value = {'results': [
             {'id': 1, 'name': 'Search Person', 'popularity': .09, 'known_for_department': 'Acting', 'known_for': [{'id': 1}]},
-            {'id': 2, 'name': 'Search Person Jr.', 'popularity': .1, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 2, 'name': 'Search Person', 'popularity': .1, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
             {'id': 3, 'name': 'Another Search Person', 'popularity': .02, 'known_for_department': 'Directing', 'known_for': [{'id': 3}]},
             {'id': 4, 'name': 'Search Person III', 'known_for_department': 'Acting', 'known_for': [{'id': 4}]},
         ]}
@@ -158,6 +158,35 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         data = await search.search_contributors(self.db, self.viewer, 'Christopher Noland', 'people',
                                                'movies_series', group_people=True)
         self.assertEqual([row['key'] for row in data['results']['people']], ['tmdb:2526416'])
+
+    async def test_grouped_people_keep_exact_match_ahead_of_popular_near_names(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 2186238, 'name': 'Andrew Patterson', 'popularity': .4368,
+             'known_for_department': 'Directing', 'known_for': [{'id': 1}]},
+            {'id': 6486735, 'name': 'Andrew James Patterson', 'popularity': 0,
+             'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Andrew Matthew Patterson', 'popularity': .02,
+             'known_for_department': 'Acting', 'known_for': [{'id': 3}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Andrew James Patterson', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in data['results']['people']], ['tmdb:6486735', 'tmdb:2186238'])
+
+    async def test_exact_people_search_admits_obscure_staff_using_provider_name(self):
+        self.local_mock.side_effect = lambda *args: empty()
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'William J. Smith', 'original_name': 'William James Smith Jr.', 'popularity': .0366,
+             'known_for_department': 'Sound', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'David James Elliott', 'popularity': 1.2025,
+             'known_for_department': 'Acting', 'known_for': [{'id': 2}]},
+        ]}
+        specific = await search.search_contributors(self.db, self.viewer, 'William James Smith Jr', 'people',
+                                                   'movies_series', group_people=True)
+        self.assertEqual([(row['key'], row['roles'], row['image']) for row in specific['results']['people']],
+                         [('tmdb:1', ['Sound'], None), ('tmdb:2', ['Actor'], None)])
+        broad = await search.search_contributors(self.db, self.viewer, 'William James', 'people',
+                                                'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in broad['results']['people']], ['tmdb:2'])
 
     async def test_actor_search_does_not_query_studios_or_return_crew(self):
         self.people_mock.return_value = {'results': [{'id': 12, 'name': 'Director', 'known_for_department': 'Directing'}]}

@@ -145,12 +145,11 @@ def principal_clause(credit, work_kind):
         and_(credit.attributes['principal'].as_boolean().is_(None), fallback))
 
 
-def remote_person_kind(raw):
+def remote_person_kind(raw, *, exact_name=False):
     department = raw.get('known_for_department')
     if department not in SEARCH_DEPARTMENTS or not raw.get('known_for'):
         return None
-    # Primary creative professions qualify directly. Broader departments need
-    # known works; no per-search profile/filmography fan-out is performed.
-    if department not in ('Acting', 'Directing', 'Writing', 'Production') and number(raw.get('popularity')) < 5:
+    # Keep broad discovery selective while letting direct searches verify staff credits.
+    if not exact_name and department not in ('Acting', 'Directing', 'Writing', 'Production') and number(raw.get('popularity')) < 5:
         return None
     return 'actor' if department == 'Acting' else 'staff'

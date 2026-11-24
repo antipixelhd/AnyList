@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import re
+import unicodedata
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -35,6 +36,10 @@ PEOPLE_POPULARITY_FLOOR = 0.1
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
 _PERSON_NAME = re.compile(r"[^\W_]+(?:[’'-][^\W_]+)*(?:\s+[^\W_]+(?:[’'-][^\W_]+)*)*")
+
+
+def person_name_spelling(name):
+    return ' '.join(re.findall(r'[^\W_]+', unicodedata.normalize('NFC', name).casefold()))
 
 
 async def name_candidates(db, statement, predicate, ordering, term, *, recover_typos):
@@ -183,10 +188,14 @@ def merge_game_matches(groups, games):
 
 def ranked_results(groups, term, *, people=False, people_pending=False):
     query = term.casefold()
+    spelling = person_name_spelling(term) if people else ''
+    def exact_person(item):
+        return spelling and (item.get('_exact_name') or person_name_spelling(item['name']) == spelling)
+
     def rank(item, section):
         name = item.get('name', '').casefold()
         similarity = item.get('_typo_similarity', 0)
-        match = 0 if name == query else 1 if name.startswith(query) else 3 if similarity else 2
+        match = 0 if name == query or exact_person(item) else 1 if name.startswith(query) else 3 if similarity else 2
         recognition = number(item.get('_popularity'))
         works = item.get('_works', 0)
         if section == 'studio':
@@ -201,19 +210,24 @@ def ranked_results(groups, term, *, people=False, people_pending=False):
         for section, row in sorted(candidates, key=lambda pair: rank(pair[1], pair[0])):
             by_person[canonical.get(row.get('_native'), row['key'])].append((section, row))
         ordered = list(by_person.items())
+        exact = {key for key, matches in ordered if any(exact_person(row) for _, row in matches)}
         # A local typo recovery cannot make a verified exact name a fallback.
-        if any(row['name'].casefold() == query and not row.get('_typo_similarity') for _, row in candidates):
+        if exact:
             ordered = [(key, matches) for key, matches in ordered
-                       if any(not row.get('_typo_similarity') for _, row in matches)]
-        visible = []
+                       if key in exact or any(not row.get('_typo_similarity') for _, row in matches)]
+        primary = set()
         for key, matches in ordered:
             popularity = max((row['_popularity'] for _, row in matches if row.get('_popularity') is not None),
                              default=PEOPLE_POPULARITY_FLOOR)
             if popularity >= PEOPLE_POPULARITY_FLOOR:
-                visible.append((key, matches))
+                primary.add(key)
         # Wait for the existing verification to settle before opening the fallback.
-        if not visible and not people_pending:
+        if not primary and not people_pending:
             visible = ordered
+        else:
+            if not people_pending and primary.isdisjoint(exact):
+                primary.update(exact)
+            visible = [(key, matches) for key, matches in ordered if key in primary]
         cards = []
         for key, matches in visible[:LIMIT]:
             best_role, best = matches[0]
@@ -327,11 +341,14 @@ async def _discover_candidates(db, viewer, term, kind, key):
     roots = await canonical_people(db, [person for _, person in mappings], lightweight=True)
     known = {(identity.namespace, identity.external_id): roots[person.id] for identity, person in mappings}
     seen = {section: {row['key'] for row in rows} for section, rows in groups.items()}
+    spelling = person_name_spelling(term) if kind == 'people' else ''
     for provider_kind, raw in sources:
         native = positive_id(raw.get('id'))
         if not native or not raw.get('name') or raw.get('adult'):
             continue
-        section = 'studio' if provider_kind == 'company' else remote_person_kind(raw)
+        exact_name = bool(spelling) and any(person_name_spelling(name) == spelling
+            for name in (raw['name'], raw.get('original_name')) if name)
+        section = 'studio' if provider_kind == 'company' else remote_person_kind(raw, exact_name=exact_name)
         if section is None:
             continue
         if kind not in ('all', 'people') and section != kind:
@@ -345,6 +362,7 @@ async def _discover_candidates(db, viewer, term, kind, key):
                     item['_popularity'] = popularity
                     item['_native'] = item.get('_native') or native
                     if section != 'studio': item['_known_for'] = raw.get('known_for') or []
+                    if exact_name: item['_exact_name'] = True
                     if kind == 'people' and not primary_profession(item.get('_department'))[0]:
                         item['_department'] = raw.get('known_for_department')
             continue
@@ -357,7 +375,7 @@ async def _discover_candidates(db, viewer, term, kind, key):
                     'url': f'/{PATHS[section]}/{identity}'}
         groups[section].append({**item, '_popularity': popularity,
             '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {}),
-            **({'_department': raw.get('known_for_department')} if kind == 'people' else {})})
+            **({'_department': raw.get('known_for_department'), '_exact_name': exact_name} if kind == 'people' else {})})
         seen[section].add(identity)
     return groups, failed
 
