@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 from core.game_mapping_index import begin, discard, publish, write
 from core.game_imdb_enrichment import now
+from core.game_imdb_snapshot import credit_rows
 from core.wikidata_claims import best_claims, qualified, snak_value
 
 
@@ -28,7 +29,7 @@ def imdb_feed(name, path=None):
                 yield csv.DictReader(handle, delimiter='\t')
 
 
-def imdb_subset(target, *, basics=None, akas=None):
+def imdb_subset(target, *, basics=None, akas=None, principals=None, names=None, include_credits=False):
     """Runs in an importer process, never on the ASGI event loop."""
     csv.field_size_limit(16 * 1024 * 1024)
     games = {}
@@ -61,12 +62,60 @@ def imdb_subset(target, *, basics=None, akas=None):
             trusted = row['isOriginalTitle'] == '1' or bool(types & {'original', 'imdbDisplay', 'alternative'})
             if trusted and 'working' not in types and 'episode' not in row['attributes'].casefold():
                 game['aliases'].append(row['title'])
+    people = imdb_principals(games, principals, names) if include_credits else {}
     with Path(target).open('w', encoding='utf-8') as output:
         for game in games.values():
             game['aliases'] = list(dict.fromkeys(name for name in game['aliases'] if name and name != game['title']))
             output.write(json.dumps(game, ensure_ascii=True) + '\n')
-        output.write(json.dumps({'_complete': True, 'source': 'imdb', 'rows': len(games), 'observed_at': now().isoformat()}) + '\n')
-    return len(games)
+        for native, person in people.items():
+            output.write(json.dumps({'id': native, **person}, ensure_ascii=True) + '\n')
+        count = len(games) + len(people)
+        output.write(json.dumps({'_complete': True, 'source': 'imdb', 'rows': count,
+            'principal_credits': include_credits, 'observed_at': now().isoformat()}) + '\n')
+    return count
+
+
+def imdb_principals(games, principals, names):
+    """Stream the large feeds once and retain only principals of video games."""
+    people = {}
+    with imdb_feed('title.principals', principals) as rows:
+        if not {'tconst', 'ordering', 'nconst', 'category', 'job', 'characters'} <= set(rows.fieldnames or []):
+            raise ValueError('Unexpected IMDb principals schema')
+        for row in rows:
+            game = games.get(row['tconst'])
+            if game is None:
+                continue
+            native, category = row['nconst'], row['category']
+            if (not re.fullmatch(r'nm[0-9]+', native) or not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', category)
+                    or not row['ordering'].isdigit()):
+                raise ValueError('Invalid IMDb game principal')
+            if category == 'thanks':
+                continue
+            characters = [] if row['characters'] == '\\N' else json.loads(row['characters'])
+            if not isinstance(characters, list) or any(not isinstance(value, str) for value in characters):
+                raise ValueError('Invalid IMDb principal characters')
+            credit = (int(row['ordering']), native, category, None if row['job'] == '\\N' else row['job'], characters)
+            game.setdefault('principals', []).append(credit)
+            people.setdefault(native, {'title': None, 'game_ids': set()})['game_ids'].add(game['id'])
+    if not people:
+        raise ValueError('Empty IMDb game principals feed')
+    with imdb_feed('name.basics', names) as rows:
+        if not {'nconst', 'primaryName'} <= set(rows.fieldnames or []):
+            raise ValueError('Unexpected IMDb names schema')
+        for row in rows:
+            person = people.get(row['nconst'])
+            if person and row['primaryName'].strip() and row['primaryName'] != '\\N':
+                person['title'] = row['primaryName']
+    people = {native: person for native, person in people.items() if person['title']}
+    if not people:
+        raise ValueError('Empty IMDb game principals names feed')
+    for game in games.values():
+        if 'principals' in game:
+            game['principals'] = list(credit_rows(
+                (credit[1:] for credit in sorted(game['principals'], key=lambda credit: credit[0])), people))
+    for person in people.values():
+        person['game_ids'] = sorted(person['game_ids'], key=lambda native: (-(games[native]['year'] or 0), native))
+    return people
 
 
 def wiki_record(item):
@@ -87,6 +136,7 @@ async def import_jsonl(factory, source, path, *, observed_at=None):
         observed_at=observed_at.astimezone(timezone.utc).replace(tzinfo=None)
     generation = await begin(factory, source, observed_at=observed_at)
     count, batch, seen, completed, feed_stamp = 0, [], set(), False, observed_at
+    principal_credits = False
     try:
         with Path(path).open(encoding='utf-8') as handle:
             for line in handle:
@@ -97,15 +147,17 @@ async def import_jsonl(factory, source, path, *, observed_at=None):
                 data = json.loads(line)
                 if data.get('_complete') is True:
                     if data.get('source')!=source or data.get('rows')!=count:raise ValueError('Incomplete reference export')
+                    principal_credits = data.get('principal_credits') is True
                     if data.get('observed_at'):
                         stamp=datetime.fromisoformat(data['observed_at'])
                         feed_stamp=stamp.astimezone(timezone.utc).replace(tzinfo=None) if stamp.tzinfo else stamp
                     completed=True;continue
                 if completed:raise ValueError('Unexpected data after completion marker')
                 if source == 'imdb':
-                    if not re.fullmatch(r'tt[0-9]+', data.get('id', '')) or not isinstance(data.get('title'), str):
+                    if not re.fullmatch(r'(tt|nm)[0-9]+', data.get('id', '')) or not isinstance(data.get('title'), str):
                         raise ValueError('Invalid IMDb subset')
-                    record = {**data, 'imdb_ids': [data['id']], 'data': data}
+                    person = data['id'].startswith('nm')
+                    record = {**data, 'imdb_ids': [data['id']], 'data': data, 'person': person}
                 elif source == 'wikidata':
                     record = wiki_record(data)
                     if record is None:
@@ -127,7 +179,8 @@ async def import_jsonl(factory, source, path, *, observed_at=None):
         async with factory() as db:
             row=await db.get(GameMappingGeneration,generation)
             row.observed_at=feed_stamp;await db.commit()
-        await publish(factory, generation, {'complete': True, 'rows': count, 'aliases_complete': source == 'imdb'})
+        await publish(factory, generation, {'complete': True, 'rows': count, 'aliases_complete': source == 'imdb',
+            **({'principal_credits': True} if principal_credits else {})})
         return {'generation': generation, 'rows': count}
     except BaseException:
         await discard(factory, generation)

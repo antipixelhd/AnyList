@@ -23,7 +23,8 @@ async def revision(db, work_id):
     rows = (await db.execute(select(Snapshot.provider, Snapshot.kind, Snapshot.external_id,
         Snapshot.fetched_at, Snapshot.next_attempt_at, Snapshot.lease_until, Snapshot.error_code,
         Snapshot.coverage['state'].astext, Snapshot.coverage['received'].astext,
-        Snapshot.coverage['complete'].astext, Snapshot.coverage['characters_complete'].astext).where(or_(
+        Snapshot.coverage['complete'].astext, Snapshot.coverage['characters_complete'].astext,
+        Snapshot.coverage['principal_generation'].astext).where(or_(
             and_(Snapshot.provider == 'imdb', Snapshot.kind == 'game_credit_job', Snapshot.external_id == str(work_id)),
             and_(Snapshot.provider == 'igdb', Snapshot.kind == 'game', Snapshot.entity_id == work_id)))
         .order_by(Snapshot.provider, Snapshot.external_id))).all()

@@ -14,6 +14,7 @@ from core.game_browse_sources import GameBrowseSources
 from core.game_credit_sources import GameCreditSources
 from core.game_imdb_mapping import game_mapping
 from core.game_imdb_source import IMDbGameSource, identifier, game_header
+from core.game_imdb_snapshot import DATASET, title_with_fallback
 from core.game_types import capabilities
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, CatalogueRelationship, MetadataSnapshot
 
@@ -185,22 +186,28 @@ class GameIMDbBindings:
             'wiki_snapshots':[{'kind':'game_imdb_mapping','key':key,'fetched_at':cached['fetched_at']}] if cached.get('fetched_at') else []}}
         if mapped['status']!='verified':return await self.reverse_lookup(work_id,native,mapped)
         title_id=mapped['imdb_id']
-        header=await self.cache.get('imdb','game_imdb_identity',title_id,
-            lambda:self.source.title(title_id),ttl=timedelta(days=30),max_stale=timedelta(days=90))
-        game_header(header['data'],title_id)
+        cached_header = {}
+
+        async def cached_title(native):
+            cached_header.update(await self.cache.get('imdb','game_imdb_identity',native,
+                lambda:self.source.title(native),ttl=timedelta(days=30),max_stale=timedelta(days=90)))
+            return cached_header['data']
+
+        header = await title_with_fallback(self.sessions, cached_title, title_id)
+        game_header(header,title_id)
         from core.game_version_scope import predates_version
-        if predates_version(header['data'],work.attributes or {}):
+        if predates_version(header,work.attributes or {}):
             from core.game_imdb_discovery_source import GameIMDbDiscoverySource
             checked=await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).page(
-                [title_id],titles={title_id:{'id':title_id,'title':header['data']['titleText']['text'],
-                    'year':(header['data'].get('releaseYear') or {}).get('year')}})
+                [title_id],titles={title_id:{'id':title_id,'title':header['titleText']['text'],
+                    'year':(header.get('releaseYear') or {}).get('year')}})
             outcome=checked['outcomes'][0]
             if checked.get('stale') or outcome['status']!='verified' or str(outcome.get('igdb_id'))!=native:
                 return {'status':'unresolved','reason':'version_scope_mismatch'}
         return await self.save(work_id,title_id,'wikidata',{
             'title_type':'videoGame','igdb_id':native,'wikidata':mapped['evidence'],
-            'mapping_fetched_at':cached['fetched_at'],'identity_fetched_at':header['fetched_at'],
-            'imdb_identity':header['data']},expected_igdb=native)
+            'mapping_fetched_at':cached['fetched_at'],'identity_fetched_at':cached_header.get('fetched_at'),
+            'imdb_identity':header},expected_igdb=native)
 
     async def reverse_lookup(self,work_id,native,previous):
         from core.game_mapping_index import lookup,wikidata_generation
@@ -234,7 +241,7 @@ class GameIMDbBindings:
         for mapping in previous.get('mappings',[]):
             claims={snak_value(row.get('mainsnak')) for row in mapping.get('evidence',{}).get('P345',[])}-{None}
             if claims and claims!={title_id}:return previous
-        current=await self.source.title(title_id)
+        current=await title_with_fallback(self.sessions,self.source.title,title_id,title)
         current_title={**title['value'],'id':title_id,'title':current['titleText']['text'],'year':(current.get('releaseYear') or {}).get('year')}
         candidate=await retrieve(self.wiki.sources,current_title)
         proof=decide(current_title,candidate['data']['rows'],complete=candidate['data']['complete'] and not candidate['stale'],branches=candidate['data']['branches'])
@@ -282,7 +289,7 @@ class GameIMDbBindings:
 
     async def revalidate(self,work_id,native,previous):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
-        header=await self.source.title(previous['id'])
+        header=await title_with_fallback(self.sessions,self.source.title,previous['id'])
         title={'id':previous['id'],'title':header['titleText']['text'],'year':(header.get('releaseYear') or {}).get('year')}
         result=await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).page([previous['id']],titles={previous['id']:title})
         outcome=result['outcomes'][0]
@@ -365,7 +372,7 @@ class GameIMDbBindings:
                         'selection':title_id,'review':evidence},fetched_at=now()))
             if old and old.external_id!=title_id:
                 await db.execute(update(CatalogueCredit).where(CatalogueCredit.work_id==work_id,
-                    CatalogueCredit.provider=='imdb').values(
+                    CatalogueCredit.provider.in_(('imdb', DATASET))).values(
                         attributes=CatalogueCredit.attributes.op('||')({'source_active':False}))
                     .execution_options(synchronize_session=False))
                 await db.delete(old)

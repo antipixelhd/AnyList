@@ -20,6 +20,7 @@ from core.game_imdb_discovery import JOB as DISCOVERY_JOB
 from core.game_imdb_enrichment import now, request as admit
 from core.game_imdb_person import JOB, COMPONENT, VERSION as PERSON_VERSION
 from core.game_imdb_source import IMDbGameSource
+from core.game_imdb_snapshot import DATASET, FALLBACK_ERRORS, people_samples
 from core.game_source_cache import session_factory
 from core.game_work import job_key
 from db import AsyncSessionLocal
@@ -35,9 +36,19 @@ class GamePeopleDiscovery:
         self.source = source or IMDbGameSource(self.sources.api.http)
 
     async def load(self, term):
-        candidates = await self.source.people_candidates(term)
+        local = {}
+        fallback = unavailable = False
+        try:
+            candidates = await self.source.people_candidates(term)
+        except ProviderError as error:
+            if error.code not in FALLBACK_ERRORS or not isinstance(self.source, IMDbGameSource):
+                raise
+            local, fallback = await people_samples(self.sessions, term)
+            if not fallback:
+                raise
+            candidates = [{'id': native, 'name': row['name'], 'snapshot': True} for native, row in local.items()]
         if not candidates:
-            return {'ids': []}
+            return {'ids': [], 'fallback': fallback}
         samples = {}
         from core.game_search_samples import qualified_games
         async with self.sessions() as db:
@@ -54,12 +65,33 @@ class GamePeopleDiscovery:
                         MetadataSnapshot.expires_at > now(), MetadataSnapshot.error_code.is_(None)))).all())
             from core.game_people_presence import presence
             unknown = [r['id'] for r in candidates if r['id'] not in established and totals.get(r['id']) is None]
-            values = await asyncio.gather(*(presence(self.sessions, native) for native in unknown))
-            samples = dict(zip(unknown, values))
+            if not fallback:
+                values = await asyncio.gather(*(presence(self.sessions, native) for native in unknown),
+                    return_exceptions=True)
+                failures = {}
+                for native, value in zip(unknown, values):
+                    if isinstance(value, (ProviderError, TimeoutError)):
+                        failures[native] = value
+                    elif isinstance(value, BaseException):
+                        raise value
+                    else:
+                        samples[native] = value
+                if failures:
+                    local, fallback = await people_samples(self.sessions, term)
+                    unavailable = not fallback or any(
+                        isinstance(error, ProviderError) and error.code not in FALLBACK_ERRORS
+                        for error in failures.values())
+                    unknown = [native for native, error in failures.items()
+                        if not isinstance(error, ProviderError) or error.code in FALLBACK_ERRORS]
+                else:
+                    unknown = []
+            for native in unknown:
+                if native in local:
+                    samples[native] = {**local[native]['sample'], 'snapshot': True}
             totals.update({native: value['total'] for native, value in samples.items()})
             candidates = [r for r in candidates if r['id'] in established or totals.get(r['id'],0) > 0]
             if not candidates:
-                return {'ids': []}
+                return {'ids': [], 'fallback': fallback, 'unavailable': unavailable}
         async with self.sessions() as db:
             await catalogue.write_lock(db)
             pending = await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
@@ -74,8 +106,8 @@ class GamePeopleDiscovery:
             for raw in candidates:
                 person = await catalogue.upsert_entity(db, {'kind': 'person', 'name': raw['name'],
                     'identities': [{'namespace': 'imdb.person', 'external_id': raw['id']}],
-                    **({'image_url': raw['image']} if raw.get('image') else {})}, 'imdb')
-                if qualified.get(raw['id'],{}).get('established'):
+                    **({'image_url': raw['image']} if raw.get('image') else {})}, DATASET if raw.get('snapshot') else 'imdb')
+                if qualified.get(raw['id'],{}).get('established') or samples.get(raw['id'], {}).get('snapshot'):
                     from core.game_work import work_context, Priority
                     from core.search_demand import context
                     with context(None), work_context(Priority.RETRY):
@@ -84,7 +116,8 @@ class GamePeopleDiscovery:
                     await admit(db, raw['id'], kind=JOB, entity_id=person.id)
             await db.commit()
         return {'ids': [row['id'] for row in candidates],
-                'samples': {r['id']:samples[r['id']] for r in candidates if r['id'] in samples}}
+                'samples': {r['id']:samples[r['id']] for r in candidates if r['id'] in samples},
+                'fallback': fallback, 'unavailable': unavailable}
 
     async def search(self, term, *, progressive=False, kind='people'):
         key = hashlib.sha256(json.dumps(['names-v2', term.strip().casefold()]).encode()).hexdigest()
@@ -92,15 +125,19 @@ class GamePeopleDiscovery:
             async with asyncio.timeout(9):
                 read = self.sources.cache.progressive if progressive else self.sources.cache.get
                 cached = await read('imdb', 'game_people_search', key,
-                    lambda _publish=None: self.load(term.strip()), ttl=timedelta(hours=6), max_stale=timedelta(days=7),
+                    lambda _publish=None: self.load(term.strip()),
+                    ttl=lambda data: timedelta(minutes=1) if data.get('fallback') or data.get('unavailable')
+                    else timedelta(hours=6), max_stale=timedelta(days=7),
                     **({'wait_seconds': .05} if progressive else {}))
         except (ProviderError, TimeoutError):
             return {'ids': [], 'pending': False, 'partial': True}
         if cached['data'] is None:
             return {'ids': [], 'pending': True, 'partial': False, 'retry_after': 2}
         natives = cached['data']['ids']
+        fallback = bool(cached['data'].get('fallback'))
+        degraded = bool(cached.get('error') or cached['data'].get('unavailable'))
         if not natives:
-            return {'ids': [], 'pending': False, 'partial': bool(cached.get('error'))}
+            return {'ids': [], 'pending': False, 'partial': degraded or fallback, 'unavailable': degraded}
         source, discovery, component = (aliased(MetadataSnapshot) for _ in range(3))
         stamp = now()
         # Source role totals can settle a role while title matching is still active.
@@ -159,7 +196,7 @@ class GamePeopleDiscovery:
                     ('actor', row.actor_works, row.actor_source), ('staff', row.staff_works, row.staff_source))
                 if kind in ('people', 'all', section) and not works and may_have_role(raw_source, sample, section)
             ]
-            if not sections:
+            if not sections or sample and sample.get('snapshot'):
                 continue
             needs_verification.add(row.native)
             if not (row.source_id is None or active(row.source_due, row.source_lease)
@@ -178,12 +215,12 @@ class GamePeopleDiscovery:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
 
         pending = any(waiting.values())
-        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(row.native in needs_verification and (
+        unavailable = degraded or len(rows) != len(natives) or any(row.native in needs_verification and (
             row.source_error or row.discovery_error
             or not row.source_complete and row.source_id is not None
                 and not active(row.source_due, row.source_lease)) for row in rows)
         unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
-        return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped,
+        return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped or fallback,
             'samples': samples, 'pending_sections':{section:bool(jobs) for section,jobs in waiting.items()},
             'pending_jobs':waiting,
             'unavailable': unavailable,

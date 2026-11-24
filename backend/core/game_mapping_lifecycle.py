@@ -5,6 +5,7 @@ from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import array, insert
 
 from core.game_imdb_enrichment import now
+from core.game_imdb_snapshot import DATASET
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 from models.game_mapping import GameMappingGeneration as Generation, GameMappingReference as Reference
 
@@ -22,7 +23,7 @@ async def quarantine(db, binding, reason):
     if binding.source == 'reviewed':
         return
     binding.evidence = {**(binding.evidence or {}), 'mapping_state': 'quarantined', 'reason': reason}
-    await db.execute(update(CatalogueCredit).where(CatalogueCredit.provider == 'imdb',
+    await db.execute(update(CatalogueCredit).where(CatalogueCredit.provider.in_(('imdb', DATASET)),
         CatalogueCredit.work_id == binding.entity_id).values(
             attributes=CatalogueCredit.attributes.op('||')({'source_active': False})))
     await revision(db)
@@ -104,10 +105,11 @@ async def changed_generation(db, generation):
     # Read only identity claims, never the potentially large credit graph.
     claims=func.jsonb_build_object(*[part for prop in ('P345','P5794','P9043')
         for part in (prop,Reference.data['value']['claims'][prop])])
+    mapping_record = Reference.native.startswith('tt') if generation.source == 'imdb' else True
     new = select(Reference.native,Reference.names,Reference.imdb_ids,claims.label('claims'), Reference.data['fingerprint'].astext.label('fingerprint')).where(
-        Reference.generation == generation.id).subquery()
+        Reference.generation == generation.id, mapping_record).subquery()
     old = select(Reference.native,Reference.names,Reference.imdb_ids, Reference.data['fingerprint'].astext.label('fingerprint')).where(
-        Reference.generation == previous).subquery()
+        Reference.generation == previous, mapping_record).subquery()
     # A bounded cache rebuild is complete only for its retrieved scope. Eviction
     # or expiry is unknown evidence, not a provider deleting an identity claim.
     cached_scope=generation.source=='wikidata' and (generation.coverage or {}).get('scope')=='retrieved_game_evidence'

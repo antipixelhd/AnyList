@@ -421,6 +421,23 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         result=await GameIMDbBindings(self.Session,source=source,wiki=wiki).reverse_lookup(self.base,'10',{'status':'unmapped'})
         self.assertEqual(result['status'],'unresolved')
 
+    async def test_reverse_lookup_can_verify_a_game_when_direct_imdb_returns_forbidden(self):
+        from core.catalogue_providers import ProviderError
+        from core.game_source_cache import GameSourceCache
+
+        await self.generation()
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base, namespace='igdb.game', external_id='10', source='igdb'))
+            await db.commit()
+        raw = {'id': 10, 'name': 'Example', 'game_type': {'id': 0}, 'first_release_date': 1577836800}
+        source = SimpleNamespace(title=AsyncMock(side_effect=ProviderError('forbidden')))
+        wiki = SimpleNamespace(sources=SimpleNamespace(
+            cache=GameSourceCache(self.Session), igdb=AsyncMock(return_value=[raw])))
+        service = GameIMDbBindings(self.Session, source=source, wiki=wiki)
+        result = await service.reverse_lookup(self.base, '10', {'status': 'unmapped'})
+        self.assertEqual((result['status'], result['binding']['id']), ('bound', 'tt1'))
+        source.title.assert_awaited_once_with('tt1')
+
     async def test_partial_wikidata_index_cannot_hide_an_unindexed_competitor(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         from test_game_credit_sources import item,claim

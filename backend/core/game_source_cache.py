@@ -223,7 +223,7 @@ class GameSourceCache:
                     from core.game_candidate_observations import invalidate_observed
                     observed={**data,'scope_names':sorted(set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[])))}
                     await invalidate_observed(db,key,observed)
-                row.payload, row.fetched_at, row.expires_at = data, now, now+ttl
+                row.payload, row.fetched_at, row.expires_at = data, now, now+(ttl(data) if callable(ttl) else ttl)
                 row.error_code, row.next_attempt_at, row.attempts = None, None, 0
                 if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}
             await self.prune(db, provider, kind, now)

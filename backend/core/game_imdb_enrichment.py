@@ -15,6 +15,7 @@ from core.enrichment_retry import (CONTENT_FAILURES, content_recheck, schedule_f
     requested_coverage, pause_unused, retain_demand, release_context)
 from core.game_imdb_bindings import GameIMDbBindings, context
 from core.game_imdb_projection import credit_document
+from core.game_imdb_snapshot import DATASET, title_reference
 from models.catalogue import CatalogueCredit, CharacterPerformance, MetadataSnapshot
 
 JOB='game_credit_job'
@@ -201,6 +202,10 @@ class GameIMDbEnrichment:
                     'started_at':now().isoformat(),'cursor':None,'seen_cursors':[],
                     'received':0,'total':None,'pages':0,'occurrences':{},'omitted':0,'complete':False}
             state.update(binding_revision=binding_revision,_mapping_request=expected_request)
+            try:
+                await self.publish_principals(work_id, token, title_id, binding_revision)
+            except catalogue.IdentityConflict:
+                log.warning('IMDb dataset credits could not be attached to game %s', work_id)
             deadline=monotonic()+55
             for _ in range(self.page_budget):
                 async with asyncio.timeout(max(1,deadline-monotonic())):
@@ -233,6 +238,36 @@ class GameIMDbEnrichment:
         except Exception:
             await self.fail(work_id,token,'ingestion_failed')
             return 'retry'
+
+    async def publish_principals(self, work_id, token, title_id, binding_revision):
+        reference = await title_reference(self.sessions, title_id, include_principals=True)
+        if not reference or not reference['coverage'].get('principal_credits'):
+            return
+        async with self.sessions() as db:
+            await catalogue.write_lock(db)
+            job = await db.scalar(snapshot(JOB, work_id).with_for_update())
+            if not job or job.lease_token != token or (job.coverage or {}).get('principal_generation') == reference['generation']:
+                return
+            _, native, binding, _ = await context(db, work_id, participation=True)
+            if not binding or binding.external_id != title_id or (
+                    binding.evidence or {}).get('evidence_revision') != binding_revision:
+                return
+            rows = reference['value'].get('principals', [])
+            doc, _ = credit_document(native, title_id, rows, generation=reference['generation'])
+            from core.game_imdb_people import bridge_people
+            await bridge_people(db, doc['credits'])
+            if doc['credits']:
+                await catalogue.ingest_document(db, doc, DATASET, project_screen_roles=False)
+            await db.execute(update(CatalogueCredit).where(
+                CatalogueCredit.work_id == work_id, CatalogueCredit.provider == DATASET,
+                CatalogueCredit.source_key.not_in([credit['source_key'] for credit in doc['credits']]),
+                CatalogueCredit.attributes['source_active'].as_boolean().is_distinct_from(False))
+                .values(attributes=CatalogueCredit.attributes.op('||')({'source_active': False}))
+                .execution_options(synchronize_session=False))
+            job.coverage = {**(job.coverage or {}), 'principal_generation': reference['generation']}
+            await db.commit()
+            from core.game_credit_updates import published
+            published(db.bind, work_id)
 
     async def publish(self,work_id,token,state,page):
         async with self.sessions() as db:
@@ -335,6 +370,8 @@ class GameIMDbEnrichment:
             job.payload=dict(state)
             job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
                 'mapping_revalidation':state.get('_mapping_request'),
+                **({'principal_generation': job.coverage['principal_generation']}
+                    if (job.coverage or {}).get('principal_generation') else {}),
                 **({'release_watch':True} if state.get('release_watch') else {})})
             job.fetched_at=now()
             job.error_code=None

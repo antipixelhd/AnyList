@@ -5,7 +5,8 @@ from sqlalchemy import String, and_, case, cast, func, literal, or_, select, tup
 from sqlalchemy.orm import aliased
 
 from core.game_types import INDEPENDENT,CREDIT_CHILDREN
-from core.game_credit_roles import ACTING
+from core.game_credit_roles import ACTING, CAST_VARIANTS
+from core.game_imdb_snapshot import DATASET
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 from models.games import GameChildState, GameEntry
 
@@ -53,10 +54,17 @@ def verified_game_credits(entity_id, kind):
     detailed_role=select(detailed.id).where(detailed.work_id==CatalogueCredit.work_id,
         detailed.contributor_id.in_(aliases),detailed.attributes['source_active'].astext.is_distinct_from('false'),
         detailed.scope!='person',
+        detailed.provider!=DATASET,
         or_(and_(role.in_(ACTING),detailed.role.in_(ACTING)),detailed.role==role)).correlate(CatalogueCredit).exists()
     # A sparse person connection remains stored as participation evidence, but
     # a title's actual voice/job roles take display precedence for the same work.
     role_filter=role_filter & or_(CatalogueCredit.scope!='person',~detailed_role)
+    live_imdb = select(detailed.id).where(detailed.work_id == CatalogueCredit.work_id,
+        detailed.contributor_id.in_(aliases), detailed.provider == 'imdb',
+        detailed.attributes['source_active'].astext.is_distinct_from('false'),
+        or_(and_(role.in_(CAST_VARIANTS), detailed.role.in_(CAST_VARIANTS)), detailed.role == role)
+        ).correlate(CatalogueCredit).exists()
+    role_filter = role_filter & or_(CatalogueCredit.provider != DATASET, ~live_imdb)
     person_credit=aliased(CatalogueCredit)
     from sqlalchemy.dialects.postgresql import aggregate_order_by
     person_characters=select(func.string_agg(func.distinct(person_credit.character_label),

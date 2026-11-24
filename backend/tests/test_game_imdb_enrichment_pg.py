@@ -1,9 +1,12 @@
 """Durable full/partial IMDb ingestion and existing-game/person boundaries."""
 import asyncio
+import gzip
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import event, func, select
 
@@ -30,6 +33,78 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dataset_import_recovers_forbidden_game_credits_and_prefers_live_credits(self):
+        from core.game_imdb_snapshot import people_samples, title_reference, title_with_fallback
+        from core.game_imdb_source import IMDbGameSource
+        from core.game_mapping_import import imdb_subset, import_jsonl
+        from core.game_people_discovery import GamePeopleDiscovery
+        from core.media_details import work_details
+        from models.game_mapping import GameMappingGeneration
+
+        def actor_card(name, details):
+            return next(row for row in details['people'] if row['name'] == name)
+
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            feeds = {
+                'basics': 'tconst\ttitleType\tprimaryTitle\toriginalTitle\tstartYear\n'
+                    'tt123\tvideoGame\tLocal title\tLocal title\t2020\n'
+                    'tt124\tmovie\tExcluded movie\tExcluded movie\t2020\n',
+                'akas': 'titleId\ttitle\ttypes\tattributes\tisOriginalTitle\n',
+                'principals': 'tconst\tordering\tnconst\tcategory\tjob\tcharacters\n'
+                    'tt123\t1\tnm1\tactor\t\\N\t["Local hero"]\n'
+                    'tt123\t2\tnm1\tactor\t\\N\t["Local hero"]\n'
+                    'tt123\t3\tnm3\tactress\t\\N\t["Ally"]\n'
+                    'tt124\t1\tnm8\tactor\t\\N\t\\N\n',
+                'names': 'nconst\tprimaryName\nnm1\tExact namesake\nnm3\tBackup actor\nnm8\tScreen only\n',
+            }
+            paths = {}
+            for name, content in feeds.items():
+                path = folder / (name + '.tsv.gz')
+                with gzip.open(path, 'wt', encoding='utf-8') as target:
+                    target.write(content)
+                paths[name] = path
+            export = folder / 'games.jsonl'
+            self.assertEqual(imdb_subset(export, include_credits=True, **paths), 3)
+            await import_jsonl(self.Session, 'imdb', export)
+
+        source = IMDbGameSource()
+        source.people_candidates = AsyncMock(return_value=[
+            {'id': 'nm1', 'name': 'Exact namesake'}, {'id': 'nm8', 'name': 'Exact namesake'}])
+        with patch('core.game_people_presence.presence', new=AsyncMock(side_effect=ProviderError('forbidden'))):
+            result = await GamePeopleDiscovery(self.Session, source=source).search('Exact namesake')
+        self.assertTrue(result['partial'])
+        self.assertFalse(result['unavailable'])
+        self.assertFalse(result['pending'])
+        self.assertEqual(list(result['samples']), ['nm1'])
+        self.assertFalse(result['samples']['nm1']['complete'])
+        self.assertEqual(len(result['samples']['nm1']['rows']), 1)
+
+        forbidden = ProviderError('forbidden')
+        header = await title_with_fallback(self.Session, AsyncMock(side_effect=forbidden), 'tt123')
+        self.assertEqual(header['titleText']['text'], 'Local title')
+        self.source.credits.side_effect = forbidden
+        self.assertEqual(await self.service.run(self.work_id), 'retry')
+        async with self.Session() as db:
+            details = await work_details(db, await db.get(CatalogueEntity, self.work_id), extras=False)
+        self.assertEqual(actor_card('Exact namesake', details)['characters'], ['Local hero'])
+        self.assertEqual(actor_card('Backup actor', details)['characters'], ['Ally'])
+
+        await self.due()
+        self.source.credits.side_effect = None
+        self.assertEqual(await self.service.run(self.work_id), 'ready')
+        async with self.Session() as db:
+            details = await work_details(db, await db.get(CatalogueEntity, self.work_id), extras=False)
+            remote = actor_card('Exact namesake', details)
+            self.assertEqual(remote['characters'], ['Hero'])
+            self.assertEqual([row['source'] for row in remote['credit_performances']], ['imdb'])
+            self.assertEqual(actor_card('Backup actor', details)['characters'], ['Ally'])
+            generation = await db.scalar(select(GameMappingGeneration).where(GameMappingGeneration.active.is_(True)))
+            generation.observed_at = now() - timedelta(days=3)
+            await db.commit()
+        self.assertIsNone(await title_reference(self.Session, 'tt123'))
+        self.assertEqual(await people_samples(self.Session, 'Exact namesake'), ({}, False))
+
     async def test_qualified_release_week_credits_refresh_daily_then_return_to_weekly(self):
         from core.game_background import RELEASE_SOURCE
         from models.game_runner import GameMapperInterest

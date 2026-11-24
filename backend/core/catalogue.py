@@ -146,6 +146,8 @@ def source_rank(kind, source):
         return 200
     if source == 'imdb':
         return 5  # Credit/person enrichment must preserve richer primary metadata.
+    if source == 'imdb_dataset':
+        return 1
     if source == PRIMARY.get(kind):
         return 100
     if source == "rawg":

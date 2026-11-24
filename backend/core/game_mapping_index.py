@@ -4,10 +4,11 @@ import json
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from core.game_imdb_enrichment import now
+from core.game_search import normalized
 from core.game_title_match import spelling
 from models.game_mapping import GameMappingGeneration as Generation, GameMappingReference as Reference
 
@@ -27,10 +28,13 @@ async def write(factory, generation, records):
         data = record['data']
         support = {'id':data.get('id'),'claims':data['claims']} if 'claims' in data else {
             key:data.get(key) for key in ('id','title','year','aliases','canonical_id')}
+        names = sorted({spelling(name) for name in [record['title'], *record.get('aliases', [])] if spelling(name)})
+        if record.get('person'):
+            names = sorted({f'!person:{word[:size]}' for word in normalized(record['title']).split()
+                for size in range(1, min(100, len(word)) + 1)})
         fingerprint = hashlib.sha256(json.dumps(support, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
         rows.append(dict(generation=generation, native=record['id'], title=record['title'],
-                         year=record.get('year'), names=sorted({spelling(name) for name in
-                             [record['title'], *record.get('aliases', [])] if spelling(name)}),
+                         year=record.get('year'), names=names,
                          imdb_ids=record.get('imdb_ids', []), igdb_ids=record.get('igdb_ids', []),
                          data={'value': data, 'fingerprint': fingerprint}))
     if not rows:
@@ -75,10 +79,14 @@ async def publish(factory, generation, coverage):
         await db.commit()
 
 
-async def lookup(factory, source, *, native=None, natives=None, imdb_id=None, imdb_ids=None, igdb_id=None, names=None, max_age=timedelta(days=2)):
+async def lookup(factory, source, *, native=None, natives=None, imdb_id=None, imdb_ids=None, igdb_id=None,
+                 names=None, person=None, include_principals=False, max_age=timedelta(days=2)):
     if factory is None:
         return []
-    query = select(Reference.native, Reference.data['value'].label('value'), Generation.id.label('generation'),
+    value = Reference.data['value']
+    if source == 'imdb' and not include_principals:
+        value = value.op('-')('principals')
+    query = select(Reference.native, value.label('value'), Generation.id.label('generation'),
                    Generation.observed_at,Generation.coverage).join(Generation, Generation.id == Reference.generation).where(
         Generation.source == source, Generation.active.is_(True), Generation.observed_at >= now() - max_age)
     if native is not None:
@@ -93,10 +101,16 @@ async def lookup(factory, source, *, native=None, natives=None, imdb_id=None, im
         query = query.where(Reference.igdb_ids.contains([int(igdb_id)]))
     elif names:
         query = query.where(Reference.names.overlap([spelling(name) for name in names]))
+    elif person:
+        words = normalized(person).split()
+        if not words:
+            return []
+        query = query.where(Reference.names.contains([f'!person:{word}' for word in words]))
+        query = query.order_by(func.lower(Reference.title) != person.strip().casefold(), Reference.title, Reference.native)
     else:
         raise ValueError('A focused reference lookup is required')
     async with factory() as db:
-        return [dict(row._mapping) for row in (await db.execute(query.limit(101))).all()]
+        return [dict(row._mapping) for row in (await db.execute(query.limit(8 if person else 101))).all()]
 
 
 async def discard(factory, generation):

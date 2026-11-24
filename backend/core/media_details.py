@@ -109,7 +109,15 @@ async def work_details(db, work, *, extras=True):
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
     if work.kind=='game':
+        from core.game_credit_roles import CAST_VARIANTS
+        from core.game_imdb_snapshot import DATASET
         from core.game_principal_credits import select_credits as select_game_credits
+        def credit_key(credit, person):
+            return canonical[person.id].id, 'actor' if credit.role in CAST_VARIANTS else credit.role
+
+        rich = {credit_key(credit, person) for credit, person in credits if credit.provider == 'imdb'}
+        credits = [(credit, person) for credit, person in credits
+            if credit.provider != DATASET or credit_key(credit, person) not in rich]
         selected=select_game_credits([{'id':canonical[person.id].id,'kind':person.kind,'role':credit.role,
             'role_label':credit.role_label,'position':credit.position,'character_label':credit.character_label,
             'attributes':credit.attributes,'source':(credit,person)} for credit,person in credits])
