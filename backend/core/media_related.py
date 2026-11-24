@@ -85,8 +85,9 @@ async def catalogue_related(db, work):
             return None
         if work.kind=='game' and target.kind=='game':
             from core.game_types import capabilities
-            if not capabilities(target.attributes).independent:
-                return None  # Child content belongs to the dedicated DLC tab.
+            caps = capabilities(target.attributes)
+            if not caps.independent or caps.game_class == 'port':
+                return None
         url = f'/title/{links[target.id]}' if target.id in links else None
         if target.kind in ('game', 'book'):
             url = f'/{"games" if target.kind == "game" else "books"}/{target.id}'
@@ -108,6 +109,8 @@ async def catalogue_related(db, work):
 
     relations, similar, seen = [], [], set()
     for edge in edges:
+        if work.kind=='game' and edge.relation=='port':
+            continue
         if work.kind=='game' and edge.target_id==work.id and edge.relation in ('dlc','expansion'):
             continue  # Playable children have their own bounded DLC projection.
         target = targets.get(edge.target_id if edge.source_id == work.id else edge.source_id)

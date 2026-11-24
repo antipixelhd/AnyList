@@ -649,7 +649,8 @@ async def favorite_order(body: GameFavoriteOrder, db: DB, viewer: Writer) -> dic
 async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     await tracking.lock_owner(db, viewer.id)
     entity = await tracking.work(db, work_id)
-    if not capabilities(entity.attributes).independent:
+    caps = capabilities(entity.attributes)
+    if not caps.independent or body.favorite and caps.game_class == 'port':
         raise HTTPException(422, 'Only independently playable games can be favorites')
     await tracking.set_favorite(db, viewer.id, work_id, body.favorite)
     await db.commit()

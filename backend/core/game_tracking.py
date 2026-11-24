@@ -266,9 +266,12 @@ async def apply_achievements(db, entity, row, patch):
 async def save_entry(db, user_id, work_id, patch):
     await lock_owner(db, user_id)
     entity = await work(db, work_id)
-    if not capabilities(entity.attributes).independent:
+    caps = capabilities(entity.attributes)
+    if not caps.independent:
         raise HTTPException(422, 'This work is not an independently trackable game')
     row = await db.scalar(select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id == work_id))
+    if row is None and caps.game_class == 'port':
+        raise HTTPException(422, 'Track the original game instead of its port')
     require_revision(row, patch.revision)
     from core import game_activity
     progress_changed = bool(patch.model_fields_set & {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'})

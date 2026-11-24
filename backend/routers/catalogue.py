@@ -327,16 +327,30 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     response.headers['Cache-Control']='private, no-store'
     identities=None;metadata_status=None
     if work.kind=='game':
+        from core.game_edition_sources import original_game
         from core.game_imdb_enrichment import request as request_credits
-        credit_state=await request_credits(db,work.id)
         from core.game_background import observe_work
-        background.add_task(observe_work,work.id,db.bind,current_user.id if current_user else None)
         from core.game_metadata import GameMetadata
         from sqlalchemy.ext.asyncio import async_sessionmaker
-        identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
         service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
-        metadata_status,changed=await service.ensure(db,work,identities=identities,wait_seconds=.25)
-        if changed:await db.refresh(work);identities=None
+        # A sparse catalogue record can be identified as a port during enrichment.
+        for _ in range(2):
+            if (work.attributes or {}).get('game_class') == 'port':
+                work = await original_game(db, work)
+                if work is None:
+                    raise HTTPException(404, 'Game not found')
+                await authorize_entity(db, work, current_user)
+            credit_state=await request_credits(db,work.id)
+            identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
+            metadata_status,changed=await service.ensure(db,work,identities=identities,wait_seconds=.25)
+            if changed:
+                await db.refresh(work)
+                identities=None
+            if (work.attributes or {}).get('game_class') != 'port':
+                break
+        else:
+            raise HTTPException(404, 'Game not found')
+        background.add_task(observe_work,work.id,db.bind,current_user.id if current_user else None)
     try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
     except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
