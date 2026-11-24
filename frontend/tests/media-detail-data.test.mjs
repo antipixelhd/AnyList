@@ -8,8 +8,17 @@ import {countryLabel} from '../src/lib/stats-overview-data.ts';
 import {episodeCountdownLabel} from '../src/lib/episode-countdown.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,gameCrewPreview,gameMobilePlatforms,mobileFactRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,gameCrewPreview,gameStudioPreview,gameMobilePlatforms,mobileFactRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('game studio previews reserve visible positions for development and publishing',()=>{
+  const studios=['Production','Supporting','Production','Studio','Developer','Publisher'].map((role,id)=>({
+    id,name:role,kind:'studio',roles:[role],characters:[],
+  }));
+  assert.deepEqual(Array.from(api.gameStudioPreview(studios),studio=>studio.id),[4,5,0,1]);
+  const both={...studios[4],roles:['Developer','Publisher']};
+  assert.deepEqual(Array.from(api.gameStudioPreview([both]),studio=>studio.id),[4]);
+});
 
 test('game crew reserves one of four slots for the leading music credit',()=>{
   const crew=['Game Director','Writer','Lead Designer','Producer','Assistant Director','Composer','music_director'].map((role,i)=>({

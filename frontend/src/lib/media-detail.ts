@@ -297,6 +297,17 @@ export function mountMediaDetail() {
   });
   root.querySelectorAll<HTMLButtonElement>('[data-detail-open-tab]').forEach(button => button.addEventListener('click', () => {
     selectTab(button.dataset.detailOpenTab!);
+    const target=button.dataset.detailCreditTarget;
+    const section=target&&root.querySelector<HTMLElement>(`[data-credit-section="${target}"]`);
+    if(section&&!section.hidden&&section.getClientRects().length){
+      const more=section.querySelector<HTMLButtonElement>('[data-credit-toggle]:not([hidden])[aria-expanded="false"]');
+      more?.click();
+      const heading=section.querySelector<HTMLElement>('[data-credit-heading]')!;
+      heading.tabIndex=-1;
+      heading.focus({preventScroll:true});
+      section.scrollIntoView({block:'start'});
+      return;
+    }
     tabs.find(tab=>tab.dataset.detailTab===button.dataset.detailOpenTab)?.focus({preventScroll:true});
   }, {signal}));
 

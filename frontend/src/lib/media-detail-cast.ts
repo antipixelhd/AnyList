@@ -1,6 +1,6 @@
 import {publishScreenPrimary} from './screen-primary';
 import { createContentTransition } from './content-motion';
-import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, gameCrewPreview, type DetailPerson, type DetailMedia } from './media-detail-data';
+import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, gameCrewPreview, gameStudioPreview, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
@@ -191,6 +191,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     if(preview){
       const displayed=rows.slice(0,8);
       fill(preview,displayed,metadataPending);
+      const group=preview.closest<HTMLElement>('[data-game-preview-group]')!;
+      group.hidden=!displayed.length&&!metadataPending;
+      group.querySelector<HTMLElement>('[data-detail-credit-target]')!.hidden=rows.length<=displayed.length;
       const overview=preview.closest<HTMLElement>('.lab-people-preview')!;
       overview.hidden=!displayed.length&&!metadataPending&&!overview.querySelector('[data-game-preview-group]:not([hidden])');
     }
@@ -241,11 +244,15 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       creatorRow.replaceChildren(...nodes);creatorRow.hidden=false;
     }
     if(gamePage){
-      const previews={crew:gameCrewPreview(groups.principal),studios:groups.studios};
-      root.querySelectorAll<HTMLElement>('[data-game-preview-group]').forEach(group=>{
-        const people=previews[group.dataset.gamePreviewGroup as keyof typeof previews];
-        fill(group.querySelector<HTMLElement>('[data-game-preview-grid]')!,people);
-        group.hidden=!people.length;
+      const previews={crew:groups.principal,studios:groups.studios};
+      root.querySelectorAll<HTMLElement>('[data-game-preview-group]:not([data-game-preview-group="cast"])').forEach(group=>{
+        const kind=group.dataset.gamePreviewGroup as keyof typeof previews;
+        const people=previews[kind];
+        const displayed=kind==='crew'?gameCrewPreview(people):gameStudioPreview(people);
+        fill(group.querySelector<HTMLElement>('[data-game-preview-grid]')!,displayed);
+        group.hidden=!displayed.length;
+        group.querySelector<HTMLElement>('[data-detail-credit-target]')!.hidden=people.length<=displayed.length;
+        if(kind==='studios')group.querySelector('h2')!.textContent=people.length===1?'Studio':'Studios';
       });
       gameCast=gameCastData(groups.cast,pendingState);
       showGameCast();
@@ -265,6 +272,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,people.slice(0,limit));
       deferred.get(section)?.replace(people.slice(limit));
       section.hidden=!people.length;
+      if(gamePage&&section.dataset.creditSection==='studios')section.querySelector('[data-credit-heading]')!.textContent=people.length===1?'Studio':'Studios';
       const toggle=section.querySelector<HTMLButtonElement>('[data-credit-toggle]')!;toggle.hidden=people.length<=limit;
     });
     metadataPending=!pendingState.error&&(pendingState.pending===true||['partial','pending','deferred'].includes(pendingState.state||''));

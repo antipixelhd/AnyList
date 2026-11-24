@@ -168,6 +168,12 @@ export function gameCrewPreview(people: DetailPerson[]) {
   return core.map(row => row.person);
 }
 
+export function gameStudioPreview(studios: DetailPerson[]) {
+  const developer = studios.find(studio=>/developer/i.test(roleText(studio)));
+  const publisher = studios.find(studio=>/publisher/i.test(roleText(studio)));
+  return [...new Set([developer, publisher, ...studios].filter((studio):studio is DetailPerson=>!!studio))].slice(0,4);
+}
+
 export function gameMobilePlatforms(media: Pick<DetailMedia, 'platforms' | 'releases'>) {
   const platforms = [...(media.platforms || []), ...media.releases.map(release => release.platform)];
   const shortName = (value: string) => value.trim().replace(/^(?:playstation|ps)\s*([1-5])$/i, 'PS$1')
