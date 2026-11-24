@@ -12,6 +12,7 @@ import MediaDetailRatings from './MediaDetailRatings.astro';
 import MediaDetailGameMetadata from './MediaDetailGameMetadata.astro';
 import MediaDetailGameRequirements from './MediaDetailGameRequirements.astro';
 import {hasSteamRequirements} from '../lib/game-info-data';
+import {gameRelationCards} from '../lib/game-relation-data';
 import {gameRatingRows,gameRatingFields} from '../lib/game-ratings-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import Icon from './Icon.astro';
@@ -49,6 +50,7 @@ const removeSpecials=signedIn&&title?.type==='series'
   ? (await viewerMediaPreferences(Astro.locals)).remove_specials_seasons!==false : true;
 const screenTitle=!!title&&['movie','series'].includes(title.type);
 const gameTitle=title?.type==='game';
+const relations=gameTitle?gameRelationCards(title.relations):(title?.relations||[]).map(work=>({work,gameIds:undefined}));
 const screenPrimaryPending=screenTitle&&signedIn&&title?.primary_status?.pending===true;
 const gamePrimaryPending=gameTitle&&title.game_metadata_status?.primary_ready===false;
 const gameChild=gameTitle&&['expansion','dlc'].includes(title?.game_class||'');
@@ -179,7 +181,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
                 <textarea id="detail-note" rows="3" aria-describedby="detail-note-status" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea>
               </section>}
             </div>
-            <section class="lab-related lab-module" data-detail-related hidden={!title.relations.length}><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid" data-detail-related-grid>{title.relations.map(work=><MediaDetailWork work={work}/>)}</div></section>
+            <section class="lab-related lab-module" data-detail-related hidden={!relations.length}><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid" data-detail-related-grid>{relations.map(({work,gameIds})=><MediaDetailWork work={work} gameRelationIds={gameIds}/>)}</div></section>
             <section class="lab-similar lab-module" data-detail-similar hidden={!title.similar.length}><div class="lab-section-title"><h2>Similar {title.type==='series'?'series':`${title.type}s`}</h2></div><div class="lab-similar-grid" data-detail-similar-grid>{title.similar.map(work=><MediaDetailWork work={work} similar/>)}</div></section>
           </div>
         </div>
