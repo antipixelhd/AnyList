@@ -215,15 +215,23 @@ class GamePeopleDiscovery:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
 
         pending = any(waiting.values())
-        unavailable = degraded or len(rows) != len(natives) or any(row.native in needs_verification and (
+        failed_rows = [row for row in rows if row.native in needs_verification and (
             row.source_error or row.discovery_error
             or not row.source_complete and row.source_id is not None
-                and not active(row.source_due, row.source_lease)) for row in rows)
+                and not active(row.source_due, row.source_lease))]
+        discovery_unavailable = degraded or len(rows) != len(natives)
+        unavailable = discovery_unavailable or bool(failed_rows)
+        # A fresh principal fallback can leave extra roles unknown for an
+        # established person. The caller can check whether their card is visible.
+        coverage_only = (fallback and not cached.get('stale') and not discovery_unavailable and failed_rows
+            and all((row.actor_works or row.staff_works) and row.native not in samples
+                and row.source_error in FALLBACK_ERRORS and not row.discovery_error for row in failed_rows))
         unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
         return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped or fallback,
             'samples': samples, 'pending_sections':{section:bool(jobs) for section,jobs in waiting.items()},
             'pending_jobs':waiting,
             'unavailable': unavailable,
+            **({'coverage_only_ids': {row.entity_id for row in failed_rows}} if coverage_only else {}),
             **({'retry_after': min(3600, min(delays, default=2))} if pending else {})}
 
 

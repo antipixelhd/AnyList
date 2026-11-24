@@ -45,6 +45,43 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await worker.run('nm1'), 'ready')
         return worker, source
 
+    async def test_fresh_dataset_role_gap_keeps_a_visible_person_without_a_warning(self):
+        async with self.Session() as db:
+            game = CatalogueEntity(kind='game', name='Saved game', attributes={'game_class': 'game'})
+            person = CatalogueEntity(kind='person', name='Cold performer')
+            db.add_all([game, person])
+            await db.flush()
+            db.add_all([
+                CatalogueIdentity(entity_id=person.id, namespace='imdb.person', external_id='nm1', source='imdb'),
+                CatalogueCredit(work_id=game.id, contributor_id=person.id, provider='imdb',
+                    source_key='saved-writing', role='writer'),
+                MetadataSnapshot(provider='imdb', kind=JOB, external_id='nm1', error_code='forbidden'),
+            ])
+            key = f'catalogue:{person.id}'
+            await db.commit()
+
+        cached = {'data': {'ids': ['nm1'], 'fallback': True}, 'stale': False}
+        params = {'q': 'Cold performer', 'kind': 'people', 'group_people': 'true'}
+        with patch.object(self.service.sources.cache, 'get', AsyncMock(return_value=cached)), \
+                patch.object(self.service.sources.cache, 'progressive', AsyncMock(return_value=cached)):
+            for domain in ('game', 'all'):
+                response = await self.client.get('/tracking/quick-search/contributors',
+                    params={**params, 'work_domain': domain})
+                self.assertEqual(response.status_code, 200, response.text)
+                data = response.json()
+                self.assertEqual([row['key'] for row in data['results']['people']], [key])
+                self.assertTrue(data['partial'])
+                self.assertFalse(data['unavailable'])
+
+            actors = await self.query('Cold performer', 'actor', 'game')
+            self.assertFalse(actors['results']['actor'])
+            self.assertTrue(actors['unavailable'])
+
+            cached['stale'] = True
+            data = (await self.client.get('/tracking/quick-search/contributors',
+                params={**params, 'work_domain': 'game'})).json()
+            self.assertTrue(data['unavailable'])
+
     async def test_fresh_actor_and_crew_search_discovers_games_without_any_detail_visit(self):
         self.assertEqual(await self.count(CatalogueIdentity, CatalogueIdentity.namespace == 'imdb.person'), 0)
         cold = await self.query('Cold performer', 'people', 'game')

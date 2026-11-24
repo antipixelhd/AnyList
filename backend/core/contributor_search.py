@@ -427,6 +427,14 @@ async def settle_game_discovery(db,groups,people,companies):
         await db.commit()
 
 
+def game_people_unavailable(discovery, results):
+    coverage_only_ids = discovery.get('coverage_only_ids')
+    if coverage_only_ids and {f'catalogue:{person_id}' for person_id in coverage_only_ids}.issubset(
+            row['key'] for row in results.get('people', ())):
+        return False
+    return discovery.get('unavailable', discovery['partial'])
+
+
 async def search_contributors(db, viewer, term, kind='all', work_domain='all', *, group_people=False):
     from core.game_access import allowed, require
     from core.game_search_samples import sample_matches
@@ -440,10 +448,10 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all', *
         pending_sections = {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']}
         if group_people:
             pending_sections = {'people': pending_sections['actor'] or pending_sections['staff']}
-        return {'results': ranked_results(groups, term, people=group_people,
-                                          people_pending=pending_sections.get('people', False)),
+        results = ranked_results(groups, term, people=group_people, people_pending=pending_sections.get('people', False))
+        return {'results': results,
             'partial': companies['partial'] or people['partial'],
-            'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
+            'unavailable': companies['partial'] or game_people_unavailable(people, results),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
             'section_pending': pending_sections,
             **({'retry_after': 2 if companies['pending'] else people.get('retry_after', 2)} if companies['pending'] or people['pending'] else {})}
@@ -471,9 +479,10 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all', *
         people.get('pending_sections', {}).get(section, people['pending'])) for section in KINDS}
     if group_people:
         sections = {'people': sections['actor'] or sections['staff']}
-    return {'results': ranked_results(groups, term, people=group_people, people_pending=sections.get('people', False)),
+    results = ranked_results(groups, term, people=group_people, people_pending=sections.get('people', False))
+    return {'results': results,
             'partial': failed or companies['partial'] or people['partial'],
-            'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
+            'unavailable': failed or companies['partial'] or game_people_unavailable(people, results),
             'verification_pending':pending or companies['pending'] or people['pending'],
             'section_pending':sections,
             **({'retry_after': 2 if pending or companies['pending'] else people.get('retry_after', 2)} if pending or companies['pending'] or people['pending'] else {}),
