@@ -116,20 +116,21 @@ def following_ids(viewer_id):
     return select(Follow.following_id).where(Follow.follower_id == viewer_id)
 
 
-async def social_people(db, viewer_id, work_id):
+async def social_people(db, viewer_id, work_id, *, rated_following=False):
     from sqlalchemy import union_all
     membership = union_all(
         select(GameEntry.user_id, GameEntry.status, GameEntry.score, GameEntry.total_seconds).where(GameEntry.work_id == work_id),
         select(GameChildState.user_id, GameChildState.status, GameChildState.score, literal(None).label('total_seconds')).where(
             GameChildState.work_id == work_id, GameChildState.base_entry_id.is_not(None)),
     ).subquery()
-    visible = or_(User.id == viewer_id, and_(User.id.in_(following_ids(viewer_id)), UserProfileData.privacy_level == PrivacyLevel.public))
+    following = and_(User.id.in_(following_ids(viewer_id)), UserProfileData.privacy_level == PrivacyLevel.public)
+    visible = and_(following, membership.c.score.is_not(None), User.id != viewer_id) if rated_following else or_(User.id == viewer_id, following)
     from models import UserSettings
     from core.list_categories import resolve
     data = (await db.execute(select(User.id, User.username, UserProfileData.display_name, UserProfileData.avatar_path, membership.c.status, membership.c.score, membership.c.total_seconds, UserSettings.preferences)
         .join(membership, membership.c.user_id == User.id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id).outerjoin(UserSettings,UserSettings.user_id==User.id).where(visible))).all()
-    rank = {status: index for index, status in enumerate(('completed', 'playing', 'played', 'paused', 'dropped', 'planning'))}
+    rank = {'completed': 0, 'played': 0, 'playing': 1, 'paused': 2, 'dropped': 3, 'planning': 4}
     people = [dict(id=user_id, username=username, display_name=display_name or username,
         has_avatar=bool(avatar_path), status=status, score=score, total_seconds=total_seconds,
         status_label=next(category.label for category in resolve(preferences=preferences).categories if category.id==status), self=user_id == viewer_id)

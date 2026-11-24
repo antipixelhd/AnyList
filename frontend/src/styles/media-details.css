@@ -74,7 +74,7 @@
 }
 .media-detail .media-personal-score:is(:hover,:focus-visible) .media-score-action .ui-icon { opacity:1; }
 @media (prefers-reduced-motion:reduce) { .media-detail .media-tracking .media-personal-score { transition:none; } }
-.media-detail :is(.lab-rating-control,.lab-friends .lab-section-title) .ui-icon { color:#f7b731; }
+.media-detail :is(.lab-rating-control,.lab-friends-average) .ui-icon { color:#f7b731; }
 .media-detail .status-control { margin:0; min-width:0; flex:1; }
 .media-detail .status-options { width:100%; min-width:0; box-sizing:border-box; }
 .media-detail .media-tracking .media-action-row .status-split>button:first-child { display:flex; align-items:center; justify-content:center; min-width:0; padding:0 4px; font-size:1.4rem; font-weight:400; white-space:nowrap; }
@@ -99,7 +99,10 @@
 .media-detail .lab-friend-avatar img { width:100%; height:100%; object-fit:cover; border-radius:inherit; }
 .media-detail .lab-friend h3 { overflow-wrap:anywhere; }
 .media-detail .lab-friend>div { flex:1; }
-.media-detail .lab-friends .lab-section-title>span { display:flex; align-items:center; gap:5px; }
+.media-detail :is(.lab-friends-actions,.lab-friends-average) { display:flex; align-items:center; gap:5px; }
+.media-detail .lab-friends-heading { color:inherit; }
+.media-detail .lab-friends-heading:is(:hover,:focus-visible) { outline:none; color:var(--blue); text-decoration:underline; }
+.media-detail .lab-friends-actions .mobile-screen-disclosure:focus-visible { outline:none; color:var(--blue); }
 .media-detail .media-social-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:34px; align-items:start; }
 .media-detail .media-social-grid>section { min-width:0; }
 .media-detail .media-social-grid h2 { margin:0 0 18px; font:600 1.6rem var(--font-navigation); color:var(--bright); }

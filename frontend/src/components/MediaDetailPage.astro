@@ -31,6 +31,7 @@ import MediaDetailCastToggle from './MediaDetailCastToggle.astro';
 import {gameCastData} from '../lib/game-cast-data';
 import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
+import {gameStatuses} from '../lib/game-editor-data';
 import {responsiveArtwork,artworkIdentity} from '../lib/responsive-artwork';
 import {detailHeroArtwork,detailSceneArtwork} from '../lib/detail-artwork';
 import {mediaShareDescription} from '../lib/share-preview';
@@ -102,6 +103,10 @@ const tabs=[
   ...(gameTitle?[{id:'requirements',label:'PC requirements'}]:[]),
 ];
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='dlc'&&!dlcAvailable)&&!(tab.id==='requirements'&&!requirementsAvailable)&&!(tab.id==='people'&&gamePeopleEmpty)&&!(tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending))?.id||'overview';
+const socialUrl=new URL(Astro.url);
+socialUrl.searchParams.set('tab','social');
+const friendList=gameTitle?'games':title?.type==='movie'?'movies':'series';
+const friendStatuses=gameTitle?gameStatuses:statuses;
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[
   ...(poster?[{...poster,priority:'high'}]:[]),
@@ -199,7 +204,22 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {(gameTitle||!!ratings.length)&&<MediaDetailRatings rows={gameTitle?gameRatings:ratings} game={gameTitle} pending={gameTitle?gameSectionPending(title.game_rating_status,gamePrimaryPending):title.scores_pending}/>}
               {gameTitle&&signedIn&&<MediaDetailGameEditions/>}
               {gameTitle&&<MediaDetailGameOffer data={offers} primaryPending={gamePrimaryPending}/>}
-              {!!title.friends.length&&<section class="lab-friends lab-module">{screenTitle&&<button type="button" class="lab-text-button mobile-screen-disclosure" data-mobile-screen-disclosure aria-expanded="false" aria-controls="mobile-detail-friends"><Icon name="chevron-right"/>People you follow · {title.friends.length} · {scoreLabel(title.friends_average??null)}/10</button>}<div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid" id="mobile-detail-friends">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
+              {signedIn&&trackable&&!!title.friends.length&&<section class="lab-friends lab-module" aria-labelledby="detail-friends-heading">
+                <div class="lab-section-title">
+                  <h2 id="detail-friends-heading"><a class="lab-friends-heading" href={socialUrl.pathname+socialUrl.search} data-detail-open-tab="social">People you follow</a></h2>
+                  <div class="lab-friends-actions">
+                    <span class="lab-friends-average"><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span>
+                    <button type="button" class="lab-text-button mobile-screen-disclosure" data-mobile-screen-disclosure aria-expanded="false" aria-controls="mobile-detail-friends" aria-label="Followed people"><Icon name="chevron-right"/></button>
+                  </div>
+                </div>
+                <div class="lab-friends-grid" id="mobile-detail-friends">
+                  {title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${friendList}`}>
+                    <span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span>
+                    <div><h3>{friend.display_name||friend.username}</h3><p>{friend.status_label||friendStatuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div>
+                    <strong>{scoreLabel(friend.score)}</strong>
+                  </a>)}
+                </div>
+              </section>}
               {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module">
                 <div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><span id="detail-note-status" data-detail-note-status role="status"></span></div>
                 <textarea id="detail-note" rows="3" aria-describedby="detail-note-status" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea>

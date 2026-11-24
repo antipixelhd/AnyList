@@ -957,6 +957,38 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         visible = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
         self.assertEqual([row['media']['id'] for row in visible], [self.base])
 
+    async def test_game_detail_following_ratings_share_social_status_and_score_order(self):
+        from core.media_details import catalogue_title
+
+        self.viewer = self.other
+        async with self.Session() as db:
+            db.add(GameEntry(user_id=self.other.id, work_id=self.base, status='completed', score=10))
+            for name, status, score, privacy in (
+                ('completed', 'completed', 7, PrivacyLevel.public),
+                ('played', 'played', 9, PrivacyLevel.public),
+                ('playing', 'playing', 10, PrivacyLevel.public),
+                ('unrated', 'played', None, PrivacyLevel.public),
+                ('private', 'completed', 10, PrivacyLevel.private),
+            ):
+                person = User(username=name, email=f'{name}@example.test', api_key=f'{name}-key', games_access=True)
+                db.add(person)
+                await db.flush()
+                db.add_all([UserProfileData(user_id=person.id, privacy_level=privacy),
+                            Follow(follower_id=self.other.id, following_id=person.id),
+                            GameEntry(user_id=person.id, work_id=self.base, status=status, score=score)])
+            await db.commit()
+            game = await db.get(CatalogueEntity, self.base)
+            details = await catalogue_title(db, game, self.other.id)
+            anonymous = await catalogue_title(db, game)
+
+        self.assertEqual([(person['status'], person['score']) for person in details['friends']],
+                         [('played', 9), ('completed', 7), ('playing', 10)])
+        self.assertAlmostEqual(details['friends_average'], 26 / 3)
+        self.assertEqual((anonymous['friends'], anonymous['friends_average']), ([], None))
+        social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+        self.assertEqual([person['username'] for person in social['people']],
+                         ['other', 'played', 'completed', 'unrated', 'playing'])
+
     async def test_late_first_completion_fact_reprojects_old_activity_without_replacing_it(self):
         row=await self.save(status='completed',finish_date='2000-01-01',total_seconds=36000)
         async with self.Session() as db:

@@ -142,7 +142,9 @@
     min-block-size: 44px;
     color: var(--text);
   }
-  .media-detail[data-mobile-disclosures-ready] :is(.lab-friends,[data-game-releases]):has(.mobile-screen-disclosure) .lab-section-title,
+  .media-detail[data-mobile-disclosures-ready] [data-game-releases]:has(.mobile-screen-disclosure) .lab-section-title,
+  .media-detail[data-mobile-disclosures-ready] .lab-friends:has(.mobile-screen-disclosure[aria-expanded=false]) .lab-friends-grid,
   .media-detail[data-mobile-disclosures-ready] .mobile-screen-disclosure[aria-expanded=false] ~ * { display: none; }
+  .media-detail .lab-friends-actions .mobile-screen-disclosure { min-inline-size:44px; justify-content:center; }
   .media-detail .mobile-screen-disclosure[aria-expanded=true] > .ui-icon { transform: rotate(90deg); }
 }

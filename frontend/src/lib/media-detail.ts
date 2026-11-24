@@ -295,9 +295,16 @@ export function mountMediaDetail() {
       event.preventDefault(); enabled[next].focus(); selectTab(enabled[next].dataset.detailTab!);
     }, {signal});
   });
-  root.querySelectorAll<HTMLButtonElement>('[data-detail-open-tab]').forEach(button => button.addEventListener('click', () => {
-    selectTab(button.dataset.detailOpenTab!);
-    const target=button.dataset.detailCreditTarget;
+  root.querySelectorAll<HTMLElement>('[data-detail-open-tab]').forEach(control => control.addEventListener('click', event => {
+    const tab=tabs.find(tab=>tab.dataset.detailTab===control.dataset.detailOpenTab && !tab.disabled && !tab.hidden);
+    if(!tab)return;
+    const link=control instanceof HTMLAnchorElement;
+    if(link){
+      if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+      event.preventDefault();
+    }
+    selectTab(tab.dataset.detailTab!);
+    const target=control.dataset.detailCreditTarget;
     const section=target&&root.querySelector<HTMLElement>(`[data-credit-section="${target}"]`);
     if(section&&!section.hidden&&section.getClientRects().length){
       const more=section.querySelector<HTMLButtonElement>('[data-credit-toggle]:not([hidden])[aria-expanded="false"]');
@@ -308,7 +315,7 @@ export function mountMediaDetail() {
       section.scrollIntoView({block:'start'});
       return;
     }
-    tabs.find(tab=>tab.dataset.detailTab===button.dataset.detailOpenTab)?.focus({preventScroll:true});
+    tab.focus({preventScroll:!link});
   }, {signal}));
 
   const favorite = root.querySelector<HTMLButtonElement>('[data-favorite-toggle]');

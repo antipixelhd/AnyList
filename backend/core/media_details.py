@@ -361,6 +361,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
     releases = []
     prices = []
     personal = {}
+    friends = []
     if identities is None:identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
     if work.kind == 'game':
         from core.game_types import capabilities
@@ -387,6 +388,9 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             'entry': state.model_dump(mode='json') if state and state.listed else None,
             'favorite': bool(state and state.favorite),
             'tracking_available': caps.independent or (caps.expansion_page and base is not None)}
+        if viewer_id and personal['tracking_available']:
+            from core.game_activity import social_people
+            friends = await social_people(db, viewer_id, work.id, rated_following=True)
         from core.game_ratings import view as ratings_view
         store=await steam_store(db,work,identities)
         ratings=await ratings_view(db,work,identities=identities,enqueue=enqueue_ratings,store=store)
@@ -426,4 +430,5 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
         'platforms': list(dict.fromkeys('PC' if row.get('group')=='PC' or str(row.get('id')) in {'3','6','14'}
             else row.get('name') for row in attrs.get('platforms') or [] if isinstance(row,dict) and row.get('name'))) if work.kind=='game' else [],
         'editions': editions, 'releases': releases, 'prices': prices, 'entry': None, 'tracking_available': False,
-        'friends': [], 'friends_average': None, 'seasons': [], **personal}
+        'friends': friends, 'friends_average': sum(friend['score'] for friend in friends) / len(friends) if friends else None,
+        'seasons': [], **personal}
