@@ -1238,10 +1238,7 @@ async def profile_series_seasons(username: str, media_id: Annotated[int, Path(gt
     media, scores = row
     status = {}
     if owner and (media.tmdb_id or media.tvdb_id) and not tracking_episode_loading.fresh(media):
-        try:
-            status = await asyncio.wait_for(tracking_episode_loading.ensure(db, media, user_id), timeout=.25)
-        except TimeoutError:
-            status = {'pending': True, 'retry_after': 2}
+        status = await tracking_episode_loading.ensure(db, media, user_id, wait_timeout=.25)
         if status.get('ready') and not status.get('pending'):
             await db.refresh(media)
     summary = await screen_list.series_seasons(db, media, user_id, scores)
