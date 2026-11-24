@@ -146,6 +146,19 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row['key'] for row in settled['results']['people']], ['tmdb:1', 'tmdb:3'])
         self.people_mock.assert_awaited_once()
 
+    async def test_grouped_people_keep_low_popularity_exact_match_over_typo_recovery(self):
+        self.local_mock.return_value = {**empty(), 'staff': [
+            {'key': 'catalogue:525', 'name': 'Christopher Nolan', 'url': '/person/catalogue:525',
+             'image': None, 'roles': ['Director'], '_native': 525, '_typo_similarity': .75},
+        ]}
+        self.people_mock.return_value = {'results': [
+            {'id': 2526416, 'name': 'Christopher Noland', 'popularity': .0253,
+             'known_for_department': 'Directing', 'known_for': [{'id': 1}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Christopher Noland', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in data['results']['people']], ['tmdb:2526416'])
+
     async def test_actor_search_does_not_query_studios_or_return_crew(self):
         self.people_mock.return_value = {'results': [{'id': 12, 'name': 'Director', 'known_for_department': 'Directing'}]}
         data = await search.search_contributors(self.db, self.viewer, 'Director', 'actor')

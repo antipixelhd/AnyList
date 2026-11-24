@@ -200,15 +200,20 @@ def ranked_results(groups, term, *, people=False, people_pending=False):
         by_person = defaultdict(list)
         for section, row in sorted(candidates, key=lambda pair: rank(pair[1], pair[0])):
             by_person[canonical.get(row.get('_native'), row['key'])].append((section, row))
+        ordered = list(by_person.items())
+        # A local typo recovery cannot make a verified exact name a fallback.
+        if any(row['name'].casefold() == query and not row.get('_typo_similarity') for _, row in candidates):
+            ordered = [(key, matches) for key, matches in ordered
+                       if any(not row.get('_typo_similarity') for _, row in matches)]
         visible = []
-        for key, matches in by_person.items():
+        for key, matches in ordered:
             popularity = max((row['_popularity'] for _, row in matches if row.get('_popularity') is not None),
                              default=PEOPLE_POPULARITY_FLOOR)
             if popularity >= PEOPLE_POPULARITY_FLOOR:
                 visible.append((key, matches))
         # Wait for the existing verification to settle before opening the fallback.
         if not visible and not people_pending:
-            visible = list(by_person.items())
+            visible = ordered
         cards = []
         for key, matches in visible[:LIMIT]:
             best_role, best = matches[0]
