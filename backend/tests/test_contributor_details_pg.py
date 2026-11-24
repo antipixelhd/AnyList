@@ -182,6 +182,41 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(alias_data['staff'])
             self.assertEqual(await local_matches(db, '%', 'all'), {'actor': [], 'staff': [], 'studio': []})
 
+    async def test_quick_search_recovers_misspelled_people_and_preserves_namesakes(self):
+        from core.contributor_search import _candidate_cache
+        from dependencies import get_current_user
+
+        _candidate_cache._store.clear()
+        self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+        async with self.Session() as db:
+            director = await db.get(CatalogueEntity, self.person_id)
+            director.name = 'Christopher Nolan'
+            director.attributes = {'known_for_department': 'Directing'}
+            alias = CatalogueEntity(kind='person', name='Christopher Nolan', canonical_person_id=director.id)
+            actor = CatalogueEntity(kind='person', name='Christopher Nolan', attributes={'known_for_department': 'Acting'})
+            db.add_all([alias, actor])
+            await db.flush()
+            actor_id = actor.id
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            db.add_all([
+                CatalogueCredit(work_id=work.id, contributor_id=alias.id, provider='tmdb',
+                    source_key='nolan-director', role='director', role_label='Director'),
+                CatalogueCredit(work_id=work.id, contributor_id=actor.id, provider='tmdb',
+                    source_key='nolan-actor', role='actor', character_label='Fixture Namesake'),
+            ])
+            await db.commit()
+
+        await self.login()
+        for term in ('Christopher Nolan', 'Christpher Nolan'):
+            response = await self.client.get('/tracking/quick-search/contributors', params={
+                'q': term, 'kind': 'people', 'work_domain': 'movies_series', 'group_people': True,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual([(row['key'], row['roles']) for row in response.json()['results']['people']], [
+                (f'catalogue:{self.person_id}', ['Director']),
+                (f'catalogue:{actor_id}', ['Actor']),
+            ])
+
     async def test_cast_completeness_uses_historical_payload_without_dropping_partial_fallback(self):
         from core.screen_cast import complete_cast_works
         from models.catalogue import MetadataSnapshot

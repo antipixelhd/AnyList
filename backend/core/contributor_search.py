@@ -1,6 +1,7 @@
 """Bounded quick-search discovery using canonical contributors and existing providers."""
 import asyncio
 import hashlib
+import re
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from core.credit_roles import work_credit
 from core.person_identities import canonical_people
 from core.game_company_discovery import discover_companies
 from core.game_people_discovery import discover_people
+from core.game_search import matches_partial
 from core.principal_credits import remote_person_kind, number, group
 from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
@@ -31,6 +33,21 @@ MAX_CANDIDATES = 8
 # Keep keystroke-triggered sorting from occupying the shared VPS's entire
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
+_PERSON_NAME = re.compile(r"[^\W_]+(?:[’'-][^\W_]+)*(?:\s+[^\W_]+(?:[’'-][^\W_]+)*)*")
+
+
+async def name_candidates(db, statement, predicate, ordering, term, *, recover_typos):
+    rows = (await db.execute(statement.where(predicate).order_by(*ordering).limit(80))).all()
+    if rows or not recover_typos or len(term) < 5 or not _PERSON_NAME.fullmatch(term):
+        return rows
+
+    # Use the existing partial trigram index only after a literal miss. A
+    # bounded name check rejects nearby trigram hits with unrelated words.
+    text = ContributorSearch.search_text
+    similarity = func.strict_word_similarity(term, text).label('typo_similarity')
+    close = (await db.execute(statement.add_columns(text, similarity)
+        .where(text.bool_op('%>>')(term)).order_by(similarity.desc(), *ordering).limit(16))).all()
+    return [row for row in close if matches_partial(term, row.search_text)]
 
 
 def result(person, kind, roles=(), key=None):
@@ -69,16 +86,19 @@ async def _local_matches(db, term, kind):
         CatalogueIdentity.external_id.in_([str(i) for i in members]))
     count = summary.actor_count if kind == 'actor' else summary.staff_count if kind == 'staff' else summary.work_count
     person_fields = (summary.actor_count, summary.staff_count, search_department(summary)) if kind == 'people' else ()
-    matches = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+    statement = select(summary.entity_id, summary.kind, summary.name, summary.image_url,
         count.label('work_count'), summary.roles, *person_fields,
         select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id == summary.entity_id,
             CatalogueIdentity.namespace == case((summary.kind == 'organization', 'tmdb.company'), else_='tmdb.person'))
             .order_by(CatalogueIdentity.external_id).limit(1).scalar_subquery().label('tmdb_id')).where(
         summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
-        or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
         summary.work_count > 0, count > 0,
-    ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
-               count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
+    )
+    ordering = (case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+                count.desc(), func.lower(summary.name), summary.entity_id)
+    matches = await name_candidates(db, statement,
+        or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
+        ordering, term, recover_typos=kind in ('people', 'actor', 'staff'))
     groups = {k: [] for k in KINDS}
     for row in matches:
         person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
@@ -91,28 +111,31 @@ async def _local_matches(db, term, kind):
         for section, labels in roles.items():
             groups[section].append({**result(person, section, labels), '_works': row.work_count,
                 '_native': positive_id(row.tmdb_id), **({'_department': row.department,
-                    '_role_works': row.actor_count if section == 'actor' else row.staff_count} if person_fields else {})})
+                    '_role_works': row.actor_count if section == 'actor' else row.staff_count} if person_fields else {}),
+                **({'_typo_similarity': row.typo_similarity} if hasattr(row, 'typo_similarity') else {})})
     return groups
 
 
-async def game_matches(db, term, kind, *, candidate_ids=()):
+async def game_matches(db, term, kind, *, candidate_ids=(), recover_typos=True):
     """Read fresh verified game summaries; never scan careers per keystroke."""
     from core.game_contributor_works import ACTING, COMPANIES
     summary = ContributorSearch
     pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
     count = summary.game_actor_count if kind == 'actor' else summary.game_staff_count if kind == 'staff' else summary.game_work_count
     person_fields = (search_department(summary),) if kind == 'people' else ()
+    statement = select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+        summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles, *person_fields,
+        select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
+            CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
+        summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
+        summary.game_work_count > 0, count > 0,
+    )
+    ordering = (case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+                count.desc(), func.lower(summary.name), summary.entity_id)
     async with _local_search_slots:
-        rows = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
-            summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles, *person_fields,
-            select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
-                CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
-            summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
-            summary.game_work_count > 0, count > 0,
-            or_(summary.search_text.ilike(pattern, escape='\\'),
-                summary.entity_id.in_(candidate_ids) if candidate_ids else False),
-        ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
-            count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
+        rows = await name_candidates(db, statement, or_(summary.search_text.ilike(pattern, escape='\\'),
+            summary.entity_id.in_(candidate_ids) if candidate_ids else False), ordering, term,
+            recover_typos=recover_typos and kind in ('people', 'actor', 'staff'))
     groups = {section: [] for section in KINDS}
     for row in rows:
         person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
@@ -125,7 +148,8 @@ async def game_matches(db, term, kind, *, candidate_ids=()):
             works = row.game_actor_count if section == 'actor' else row.game_staff_count if section == 'staff' else row.game_work_count
             item = result(person, section, labels)
             groups[section].append({**item, 'url': item['url'] + '?media_type=game', '_works': works,
-                '_native':positive_id(row.tmdb_id), **({'_department': row.department, '_role_works': works} if person_fields else {})})
+                '_native':positive_id(row.tmdb_id), **({'_department': row.department, '_role_works': works} if person_fields else {}),
+                **({'_typo_similarity': row.typo_similarity} if hasattr(row, 'typo_similarity') else {})})
     return groups
 
 
@@ -160,13 +184,14 @@ def ranked_results(groups, term, *, people=False):
     query = term.casefold()
     def rank(item, section):
         name = item.get('name', '').casefold()
-        match = 0 if name == query else 1 if name.startswith(query) else 2
+        similarity = item.get('_typo_similarity', 0)
+        match = 0 if name == query else 1 if name.startswith(query) else 3 if similarity else 2
         recognition = number(item.get('_popularity'))
         works = item.get('_works', 0)
         if section == 'studio':
             recent = int((item.get('_latest') or '0').replace('-', ''))
             return (match, -recognition, -works, -recent, not bool(item.get('image')), name, item['key'])
-        return (match, -recognition, -works, not bool(item.get('image')), name, item['key'])
+        return (match, -similarity, -recognition, -works, not bool(item.get('image')), name, item['key'])
     if people:
         candidates = [(section, row) for section in ('actor', 'staff') for row in groups[section]]
         canonical = {row['_native']: row['key'] for _, row in candidates
@@ -399,7 +424,9 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all', *
             discover_companies(db, term, kind, progressive=True),
             discover_people(db, term, kind, progressive=True))
         groups, failed, pending = screen
-        groups = merge_game_matches(groups, await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids']))
+        game_results = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'],
+            recover_typos=not (groups['actor'] or groups['staff'] or sections['actor'] or sections['staff']))
+        groups = merge_game_matches(groups, game_results)
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
         await settle_game_discovery(db,groups,people,companies)
     else:
