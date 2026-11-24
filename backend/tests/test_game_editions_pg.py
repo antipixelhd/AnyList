@@ -133,9 +133,12 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
         provider._igdb_pages = AsyncMock(return_value=([], True))
         provider.igdb = AsyncMock(side_effect=[[CONSOLE_BUNDLE], [ONLINE, STORY], [ORIGINAL],
             [COLLECTION], HALO_MEMBERS])
-        doc, _ = await provider._detail('igdb', 'game', CONSOLE_BUNDLE['id'])
-        collection_doc, _ = await provider._detail('igdb', 'game', COLLECTION['id'])
+        primary = AsyncMock()
+        doc, _ = await provider._detail('igdb', 'game', CONSOLE_BUNDLE['id'], on_primary=primary)
+        collection_doc, _ = await provider._detail('igdb', 'game', COLLECTION['id'], on_primary=primary)
         self.assertEqual(provider.igdb.await_count, 5)
+        self.assertEqual(primary.await_count, 2)
+        self.assertTrue(all('release_bundle' not in call.args[0] for call in primary.await_args_list))
         self.assertEqual(collection_doc['release_bundle'], {})
         async with self.Session() as db:
             bundle = await catalogue.ingest_document(db, doc, 'igdb')

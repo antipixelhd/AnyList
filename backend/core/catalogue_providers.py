@@ -636,7 +636,8 @@ class CatalogueProviders:
                     pass
                 else:
                     doc['work']['attributes'][WORKS_BUNDLE_ATTRIBUTE] = proof
-            if game_class == 'bundle' and version is None:
+            # Only the deferred metadata path needs discovery evidence.
+            if on_primary and game_class == 'bundle' and version is None:
                 from core.game_release_bundles import VERSION, verify
 
                 raw['_coverage']['release_bundle_version'] = VERSION
