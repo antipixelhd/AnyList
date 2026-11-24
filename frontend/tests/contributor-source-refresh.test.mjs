@@ -116,17 +116,22 @@ test('company portfolios poll an approval-protected compact status and preserve 
 test('displayed role captions publish through one bounded status poll',async()=>{
   const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
   const timers=[],calls=[],captions=[],controller=new AbortController();
+  let role='actor';
   globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
   globalThis.fetch=async path=>{calls.push(path);return Response.json({id:'nm1',pending:false,complete:true,roles:[{id:7,roles:['Actor'],characters:['A role']}]});};
   try{
     const resource=contributorSourceRefresh(controller.signal,()=>{},
-      {kind:'actor',ids:()=>[7,7,...Array.from({length:110},(_,i)=>i+8)],apply:rows=>captions.push(rows)});
+      {get kind(){return role;},ids:()=>[7,7,...Array.from({length:110},(_,i)=>i+8)],apply:rows=>captions.push(rows)});
     resource.update({id:'nm1',pending:true,complete:false});timers.shift()();
     await new Promise(resolve=>setImmediate(resolve));
     assert.equal(calls.length,1);
     const query=new URL(calls[0],'https://test.invalid').searchParams;
     assert.equal(query.getAll('work_id').length,100);assert.equal(query.get('kind'),'actor');
     assert.deepEqual(captions,[[{id:7,roles:['Actor'],characters:['A role']}]]);
+    role='staff';
+    resource.update({id:'nm1',pending:true,complete:false});timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(new URL(calls[1],'https://test.invalid').searchParams.get('kind'),'staff');
   }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
 });
 

@@ -19,6 +19,27 @@ def empty():
 
 
 class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_combined_people_use_canonical_identity_before_limiting(self):
+        def candidate(key, native, name, role, popularity, works, **extra):
+            return {'key': key, 'name': name, 'image': None, 'url': f'/person/{key}', 'roles': [role],
+                    '_native': native, '_popularity': popularity, '_works': works, **extra}
+
+        groups = empty()
+        groups['actor'] = [
+            candidate('tmdb:1', 1, 'Bryan Cranston', 'Actor', 7, 3, _department='Acting'),
+            candidate('catalogue:2', 2, 'Bryan Cranston', 'Actor', 2, 1),
+            *(candidate(f'catalogue:{i}', i, f'Cranston Bryan {i}', 'Actor', 90, 2) for i in range(10, 20)),
+        ]
+        groups['staff'] = [
+            candidate('catalogue:1', 1, 'Bryan Cranston', 'Director', 7, 9),
+            candidate('catalogue:3', 3, 'Bryan Cranston Jr.', 'Writer', 90, 5, _department='Writing'),
+        ]
+        rows = search.ranked_results(groups, 'Bryan Cranston', people=True)['people']
+        self.assertEqual(len(rows), search.LIMIT)
+        self.assertEqual([r['key'] for r in rows[:3]], ['catalogue:1', 'catalogue:2', 'catalogue:3'])
+        self.assertEqual([r['roles'] for r in rows[:3]], [['Actor'], ['Actor'], ['Writer']])
+        self.assertEqual(rows[0]['url'], '/person/catalogue:1')
+
     async def asyncSetUp(self):
         search._candidate_cache._store.clear()
         self.db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(), commit=AsyncMock())

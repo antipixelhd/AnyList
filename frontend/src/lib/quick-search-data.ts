@@ -1,7 +1,7 @@
 import {createBrowseCache} from './browse-cache.ts';
 import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
-export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
-export type ContributorScope = 'people'|'actor'|'staff'|'studio';
+export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'people' | 'studio';
+export type ContributorScope = 'people' | 'studio';
 export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
 function verificationPause(signal:AbortSignal, delay=1500) {
@@ -145,13 +145,14 @@ export function createQuickTitleBatch<T>() {
     return settled.size === 2 ? results : undefined;
   };
 }
-export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studio',T[]>, incoming:Partial<Record<'actor'|'staff'|'studio',T[]>>, scope?:ContributorScope) {
-  return {actor:scope==='studio'||scope==='staff'?current.actor:incoming.actor||[],
-    staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
-    studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
+export function mergeContributorResults<T>(current:Record<ContributorScope,T[]>, incoming:Partial<Record<ContributorScope,T[]>>, scope?:ContributorScope) {
+  return {
+    people:scope==='studio'?current.people:incoming.people||[],
+    studio:scope==='people'?current.studio:incoming.studio||[],
+  };
 }
 export function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
-  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
+  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'people','studio'];
 }
 export function availableQuickSearchTabs(order: SearchSection[], counts: Partial<Record<SearchSection, number>>, pending: ReadonlySet<SearchSection>): SearchSection[] {
   return order.filter(kind => (counts[kind] ?? 0) > 0 || pending.has(kind));

@@ -12,6 +12,64 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_person_defaults_to_known_department_then_distinct_work_count(self):
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.attributes = {**person.attributes, 'known_for_department': 'Acting'}
+            film = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            series = CatalogueEntity(kind='series', name='Directed Series', attributes={'first_air_date':'2019-01-01'})
+            db.add(series)
+            await db.flush()
+            for work, role in [(film, 'director'), (series, 'director'), (series, 'writer')]:
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id, provider='tmdb',
+                    source_key=f'fixture-{role}', role=role, role_label=role.title()))
+            await db.commit()
+        await self.login()
+        opening = (await self.request('person')).json()
+        self.assertEqual((opening['primary_label'], opening['kind'], opening['role_options']), ('Actor', 'actor', ['actor', 'staff']))
+        self.assertEqual([work['characters'] for work in opening['works']], [['Fixture Character']])
+        staff = (await self.request('person', role='staff', media_type='series')).json()
+        self.assertEqual([work['title'] for work in staff['works']], ['Directed Series'])
+        self.assertEqual(staff['works'][0]['roles'], ['Director', 'Writer'])
+        self.assertEqual(staff['works'][0]['characters'], [])
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.attributes = {}
+            await db.commit()
+        fallback = (await self.request('person')).json()
+        self.assertEqual(fallback['kind'], 'staff')
+        self.assertEqual(fallback['known_works'], 2)
+
+    async def test_person_episode_credits_are_lazy_exact_and_paginate_seasons(self):
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id, namespace='tmdb.person', external_id='400', source='tmdb'))
+            await db.commit()
+        await self.login()
+        self.key_mock.return_value = 'fixture'
+        show = {'id': 700, 'seasons': [{'season_number': number} for number in range(1, 8)]}
+        async def get_season(_series, number, **_):
+            return {'season_number': number, 'episodes': [
+                {'episode_number': 1, 'name': 'Owned', 'crew': [
+                    {'id': 400, 'job': 'Director'}, {'id': 400, 'job': 'Director'}, {'id': 401, 'job': 'Writer'}]},
+                {'episode_number': 2, 'name': 'Other', 'crew': [{'id': 401, 'job': 'Director'}]},
+            ]}
+        path = f'/tracking/contributors/person/catalogue:{self.person_id}/series/700/episode-credits'
+        with patch('core.tmdb.get_show_light', AsyncMock(return_value=show)) as series_provider, \
+             patch('core.tmdb.get_season', AsyncMock(side_effect=get_season)) as season_provider, \
+             patch('core.tmdb.get_person', AsyncMock(return_value={'id':400, 'name':'Fixture Person'})), \
+             patch('core.contributor_episodes.result_filters', AsyncMock(return_value={'min_runtime':0,'excluded_genres':[]})):
+            await self.request('person')
+            series_provider.assert_not_awaited()
+            season_provider.assert_not_awaited()
+            first = await self.client.get(path)
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(first.json()['next_season'], 6)
+            self.assertEqual(first.json()['episodes'], [
+                {'season': number, 'episode': 1, 'title': 'Owned', 'roles': ['Director']} for number in range(1, 7)])
+            self.assertEqual(season_provider.await_count, 6)
+            last = (await self.client.get(path, params={'after_season': 6})).json()
+            self.assertEqual(last, {'episodes': [{'season': 7, 'episode': 1, 'title': 'Owned', 'roles': ['Director']}], 'next_season': None})
+
     async def test_studio_share_uses_known_public_works_from_a_parked_search_sample(self):
         from datetime import timedelta
         from core import contributor_evidence as evidence

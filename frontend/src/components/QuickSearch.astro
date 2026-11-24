@@ -17,7 +17,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
     <button type="button" data-search-tab-step="-1" aria-label="Previous search section" disabled><Icon name="chevron-left" /></button>
     <div class="quick-search-tab-current">
       <h2 data-search-tab-title aria-live="polite">{combineLists ? 'Movies & Series' : 'Movies'}</h2>
-      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all" hidden={!combineLists}></span><span data-search-tab-marker="movie" hidden={combineLists}></span><span data-search-tab-marker="series" hidden={combineLists}></span><span data-search-tab-marker="game" hidden={!showGames}></span><span data-search-tab-marker="actor"></span><span data-search-tab-marker="staff"></span><span data-search-tab-marker="studio"></span></div>
+      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all" hidden={!combineLists}></span><span data-search-tab-marker="movie" hidden={combineLists}></span><span data-search-tab-marker="series" hidden={combineLists}></span><span data-search-tab-marker="game" hidden={!showGames}></span><span data-search-tab-marker="people"></span><span data-search-tab-marker="studio"></span></div>
     </div>
     <button type="button" data-search-tab-step="1" aria-label="Next search section"><Icon name="chevron-right" /></button>
   </nav>
@@ -27,8 +27,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
     <section class="quick-search-card" data-search-section="movie" hidden><h2>Movies</h2><div data-search-results="movie"></div></section>
     <section class="quick-search-card" data-search-section="series" hidden><h2>Series</h2><div data-search-results="series"></div></section>
     <section class="quick-search-card" data-search-section="game" hidden><h2>Games</h2><div data-search-results="game"></div></section>
-    <section class="quick-search-card" data-search-section="actor" hidden><h2>Actors</h2><div data-search-results="actor"></div></section>
-    <section class="quick-search-card" data-search-section="staff" hidden><h2>Crew</h2><div data-search-results="staff"></div></section>
+    <section class="quick-search-card" data-search-section="people" hidden><h2>People</h2><div data-search-results="people"></div></section>
     <section class="quick-search-card" data-search-section="studio" hidden><h2>Studios</h2><div data-search-results="studio"></div></section>
   </div>
   <p class="quick-search-state" data-search-state role="status" hidden></p>
