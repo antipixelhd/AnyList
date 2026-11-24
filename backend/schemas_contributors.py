@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ContributorKind = Literal["actor", "staff", "studio"]
+PersonCreditRole = Literal['actor', 'staff']
 ContributorMediaScope = Literal["all", "movie", "series", "game"]
 ListScope = Literal["all", "in", "out"]
 
@@ -49,6 +50,18 @@ class ContributorAppearance(BaseModel):
     seasons: list[ContributorAppearanceSeason]
 
 
+class ContributorEpisodeCredit(BaseModel):
+    season: int
+    episode: int
+    title: str
+    roles: list[str]
+
+
+class ContributorEpisodeCredits(BaseModel):
+    episodes: list[ContributorEpisodeCredit]
+    next_season: int | None
+
+
 class ContributorWork(BaseModel):
     key: str
     id: int | None = None
@@ -91,6 +104,8 @@ class ContributorPage(BaseModel):
     headquarters: str | None = None
     links: list[ContributorLink] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=list)
+    role_options: list[PersonCreditRole] = Field(default_factory=list, exclude_if=lambda value: not value)
+    primary_label: str | None = Field(default=None, exclude_if=lambda value: value is None)
     works: list[ContributorWork]
     known_works: int
     list_count: int | None = None

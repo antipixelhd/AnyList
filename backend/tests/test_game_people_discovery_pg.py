@@ -67,6 +67,11 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ready['results']['staff']), 1)
         self.assertEqual(ready['results']['actor'][0]['key'], ready['results']['staff'][0]['key'])
         self.assertEqual(ready['results']['staff'][0]['roles'], ['Composer'])
+        grouped = (await self.client.get('/tracking/quick-search/contributors', params={
+            'q': 'Cold performer', 'kind': 'people', 'work_domain': 'game', 'group_people': 'true',
+        })).json()
+        self.assertEqual([row['key'] for row in grouped['results']['people']], [ready['results']['actor'][0]['key']])
+        self.assertFalse(grouped['section_pending']['people'])
         actor = await self.client.get('/tracking/contributors/actor/' + ready['results']['actor'][0]['key'],
             params={'media_type': 'game'})
         self.assertEqual(actor.status_code, 200, actor.text)

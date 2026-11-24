@@ -18,9 +18,9 @@ test('games use canonical catalogue routes and resolve remote IDs without a trac
 test('Games title fan-out, pending tabs and visibility stay separate from movie/series ranking',()=>{
   assert.deepEqual(quickSearchRequests('Ring',undefined,false,true).map(row=>row.kind),['game','contributors','contributors']);
   assert.ok(!quickSearchRequests('Ring',undefined,true,false).some(row=>row.kind==='game'));
-  const counts={all:2,movie:1,series:1,game:4,actor:1};
-  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true),counts,new Set()),['all','game','actor']);
-  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true,true,false),counts,new Set(['game'])),['all','actor']);
+  const counts={all:2,movie:1,series:1,game:4,people:1};
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true),counts,new Set()),['all','game','people']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true,true,false),counts,new Set(['game'])),['all','people']);
   assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true,false,true),{},new Set(['game'])),['game']);
 });
 

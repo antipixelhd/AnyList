@@ -91,7 +91,7 @@ def staff_groups(listed):
         best = sorted((t for t in titles if t["detail_media_id"] is not None), key=lambda t: (
             -(t["score"] if t["score"] is not None else -1), t["name"].casefold(), t["key"]))[:12]
         result.append({"key": key, "label": people[key]["label"], "image": people[key].get("image"),
-            "href": f"/person/{quote(key, safe='')}", "roles": roles, "prominence": min(map(role_order, roles)),
+            "href": f"/person/{quote(key, safe='')}?role=staff", "roles": roles, "prominence": min(map(role_order, roles)),
             "titles": len(titles), "minutes": sum(t["minutes"] for t in titles), "rated_titles": len(rated),
             "mean_score": sum(t["score"] for t in rated) / len(rated) if rated else None,
             "runtime_missing_plays": sum(t["runtime_missing"] for t in titles),

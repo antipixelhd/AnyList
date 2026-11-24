@@ -20,6 +20,7 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
     const company=initial?.source==='igdb-company';
     if(signal.aborted||!initial||!(initial.pending||initial.identity_pending||initial.characters_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
+    const role=captions?.kind;
     let failures=0,captionRevision:string|null|undefined,captionPending=!!initial.characters_pending;
     let observed=initial;
     const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
@@ -31,8 +32,8 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         const path=company?`companies/${initial.id}/works/status`:`people/${initial.id}/imdb`;
         const ids=[...new Set(captions?.ids()||[])];
         const query=new URLSearchParams();
-        if(!company&&captions){
-          query.set('kind',captions.kind);
+        if(!company&&role){
+          query.set('kind',role);
           ids.slice(0,100).forEach(id=>query.append('work_id',String(id)));
         }
         const response=await fetch(`/api/proxy/tracking/games/${path}${query.size?`?${query}`:''}`,{signal:request.signal,cache:'no-store'});
@@ -44,11 +45,11 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         // A display budget is not a collection limit. Refresh further mounted
         // cards sequentially only when public evidence changes, with the same
         // route-generation cancellation and at most one request in flight.
-        if(!company&&captions&&(captionPending||next.characters_pending||next.revision!==captionRevision)){
+        if(!company&&captions&&role&&(captionPending||next.characters_pending||next.revision!==captionRevision)){
           let pending=!!next.characters_pending;
           for(let offset=100;offset<ids.length;offset+=100){
             if(signal.aborted||generation!==current)return;
-            const batch=new URLSearchParams({kind:captions.kind});
+            const batch=new URLSearchParams({kind:role});
             ids.slice(offset,offset+100).forEach(id=>batch.append('work_id',String(id)));
             const response=await fetch(`/api/proxy/tracking/games/${path}?${batch}`,{signal:request.signal,cache:'no-store'});
             if(!response.ok)throw new Error('Caption status unavailable');

@@ -19,6 +19,27 @@ def empty():
 
 
 class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_combined_people_use_canonical_identity_before_limiting(self):
+        def candidate(key, native, name, role, popularity, works, **extra):
+            return {'key': key, 'name': name, 'image': None, 'url': f'/person/{key}', 'roles': [role],
+                    '_native': native, '_popularity': popularity, '_works': works, **extra}
+
+        groups = empty()
+        groups['actor'] = [
+            candidate('tmdb:1', 1, 'Bryan Cranston', 'Actor', 7, 3, _department='Acting'),
+            candidate('catalogue:2', 2, 'Bryan Cranston', 'Actor', 2, 1),
+            *(candidate(f'catalogue:{i}', i, f'Cranston Bryan {i}', 'Actor', 90, 2) for i in range(10, 20)),
+        ]
+        groups['staff'] = [
+            candidate('catalogue:1', 1, 'Bryan Cranston', 'Director', 7, 9),
+            candidate('catalogue:3', 3, 'Bryan Cranston Jr.', 'Writer', 90, 5, _department='Writing'),
+        ]
+        rows = search.ranked_results(groups, 'Bryan Cranston', people=True)['people']
+        self.assertEqual(len(rows), search.LIMIT)
+        self.assertEqual([r['key'] for r in rows[:3]], ['catalogue:1', 'catalogue:2', 'catalogue:3'])
+        self.assertEqual([r['roles'] for r in rows[:3]], [['Actor'], ['Actor'], ['Writer']])
+        self.assertEqual(rows[0]['url'], '/person/catalogue:1')
+
     async def asyncSetUp(self):
         search._candidate_cache._store.clear()
         self.db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(), commit=AsyncMock())
@@ -90,6 +111,82 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         await search.search_contributors(self.db, self.viewer, 'Name', 'people')
         self.company_mock.assert_not_called()
         self.people_mock.assert_awaited_once()
+
+    async def test_grouped_people_hide_low_popularity_when_a_popular_exact_match_exists(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'Search Person', 'popularity': .09, 'known_for_department': 'Acting', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'Search Person', 'popularity': .1, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Another Search Person', 'popularity': .02, 'known_for_department': 'Directing', 'known_for': [{'id': 3}]},
+            {'id': 4, 'name': 'Search Person III', 'known_for_department': 'Acting', 'known_for': [{'id': 4}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([(row['key'], row['image']) for row in data['results']['people']],
+                         [('tmdb:2', None), ('tmdb:4', None)])
+        self.people_mock.assert_awaited_once()
+
+    async def test_grouped_people_allow_low_popularity_after_eligibility_settles(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'Search Person', 'popularity': .07, 'known_for_department': 'Acting', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'Search Person Jr.', 'popularity': 2, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Search Person III', 'popularity': 0, 'known_for_department': 'Acting', 'known_for': [{'id': 3}]},
+        ]}
+
+        def verify_people(db, viewer, groups, key, pending, **kwargs):
+            groups['staff'].clear()
+            pending['staff'] = search.verified_people.await_count == 1
+            return pending['staff']
+
+        search.verified_people.side_effect = verify_people
+        initial = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people', group_people=True)
+        self.assertTrue(initial['section_pending']['people'])
+        self.assertEqual(initial['results']['people'], [])
+        settled = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people', group_people=True)
+        self.assertFalse(settled['verification_pending'])
+        self.assertEqual([row['key'] for row in settled['results']['people']], ['tmdb:1', 'tmdb:3'])
+        self.people_mock.assert_awaited_once()
+
+    async def test_grouped_people_keep_low_popularity_exact_match_over_typo_recovery(self):
+        self.local_mock.return_value = {**empty(), 'staff': [
+            {'key': 'catalogue:525', 'name': 'Christopher Nolan', 'url': '/person/catalogue:525',
+             'image': None, 'roles': ['Director'], '_native': 525, '_typo_similarity': .75},
+        ]}
+        self.people_mock.return_value = {'results': [
+            {'id': 2526416, 'name': 'Christopher Noland', 'popularity': .0253,
+             'known_for_department': 'Directing', 'known_for': [{'id': 1}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Christopher Noland', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in data['results']['people']], ['tmdb:2526416'])
+
+    async def test_grouped_people_keep_exact_match_ahead_of_popular_near_names(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 2186238, 'name': 'Andrew Patterson', 'popularity': .4368,
+             'known_for_department': 'Directing', 'known_for': [{'id': 1}]},
+            {'id': 6486735, 'name': 'Andrew James Patterson', 'popularity': 0,
+             'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Andrew Matthew Patterson', 'popularity': .02,
+             'known_for_department': 'Acting', 'known_for': [{'id': 3}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Andrew James Patterson', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in data['results']['people']], ['tmdb:6486735', 'tmdb:2186238'])
+
+    async def test_exact_people_search_admits_obscure_staff_using_provider_name(self):
+        self.local_mock.side_effect = lambda *args: empty()
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'William J. Smith', 'original_name': 'William James Smith Jr.', 'popularity': .0366,
+             'known_for_department': 'Sound', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'David James Elliott', 'popularity': 1.2025,
+             'known_for_department': 'Acting', 'known_for': [{'id': 2}]},
+        ]}
+        specific = await search.search_contributors(self.db, self.viewer, 'William James Smith Jr', 'people',
+                                                   'movies_series', group_people=True)
+        self.assertEqual([(row['key'], row['roles'], row['image']) for row in specific['results']['people']],
+                         [('tmdb:1', ['Sound'], None), ('tmdb:2', ['Actor'], None)])
+        broad = await search.search_contributors(self.db, self.viewer, 'William James', 'people',
+                                                'movies_series', group_people=True)
+        self.assertEqual([row['key'] for row in broad['results']['people']], ['tmdb:2'])
 
     async def test_actor_search_does_not_query_studios_or_return_crew(self):
         self.people_mock.return_value = {'results': [{'id': 12, 'name': 'Director', 'known_for_department': 'Directing'}]}
