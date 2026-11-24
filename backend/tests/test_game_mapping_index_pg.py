@@ -568,7 +568,8 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         proof['support']={'wiki_snapshots':[{'kind':'game_credit_items','key':'support','fetched_at':stamp.isoformat()}]}
         async with self.Session() as db:
             db.add_all([CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'),
-                MetadataSnapshot(provider='wikidata',kind='game_credit_items',external_id='v1:support',payload={},fetched_at=stamp)])
+                MetadataSnapshot(provider='wikidata',kind='game_credit_items',external_id='v1:support',payload={},
+                    fetched_at=stamp,expires_at=stamp+timedelta(days=1))])
             await db.commit()
             stored=await db.scalar(GameSourceCache.query('wikidata','game_credit_items','support').with_only_columns(MetadataSnapshot.fetched_at))
             self.assertEqual(stored,stamp)
