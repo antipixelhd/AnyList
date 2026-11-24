@@ -112,6 +112,40 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.company_mock.assert_not_called()
         self.people_mock.assert_awaited_once()
 
+    async def test_grouped_people_hide_low_popularity_when_other_results_exist(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'Search Person', 'popularity': .09, 'known_for_department': 'Acting', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'Search Person Jr.', 'popularity': .1, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Another Search Person', 'popularity': .02, 'known_for_department': 'Directing', 'known_for': [{'id': 3}]},
+            {'id': 4, 'name': 'Search Person III', 'known_for_department': 'Acting', 'known_for': [{'id': 4}]},
+        ]}
+        data = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people',
+                                               'movies_series', group_people=True)
+        self.assertEqual([(row['key'], row['image']) for row in data['results']['people']],
+                         [('tmdb:2', None), ('tmdb:4', None)])
+        self.people_mock.assert_awaited_once()
+
+    async def test_grouped_people_allow_low_popularity_after_eligibility_settles(self):
+        self.people_mock.return_value = {'results': [
+            {'id': 1, 'name': 'Search Person', 'popularity': .07, 'known_for_department': 'Acting', 'known_for': [{'id': 1}]},
+            {'id': 2, 'name': 'Search Person Jr.', 'popularity': 2, 'known_for_department': 'Directing', 'known_for': [{'id': 2}]},
+            {'id': 3, 'name': 'Search Person III', 'popularity': 0, 'known_for_department': 'Acting', 'known_for': [{'id': 3}]},
+        ]}
+
+        def verify_people(db, viewer, groups, key, pending, **kwargs):
+            groups['staff'].clear()
+            pending['staff'] = search.verified_people.await_count == 1
+            return pending['staff']
+
+        search.verified_people.side_effect = verify_people
+        initial = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people', group_people=True)
+        self.assertTrue(initial['section_pending']['people'])
+        self.assertEqual(initial['results']['people'], [])
+        settled = await search.search_contributors(self.db, self.viewer, 'Search Person', 'people', group_people=True)
+        self.assertFalse(settled['verification_pending'])
+        self.assertEqual([row['key'] for row in settled['results']['people']], ['tmdb:1', 'tmdb:3'])
+        self.people_mock.assert_awaited_once()
+
     async def test_actor_search_does_not_query_studios_or_return_crew(self):
         self.people_mock.return_value = {'results': [{'id': 12, 'name': 'Director', 'known_for_department': 'Directing'}]}
         data = await search.search_contributors(self.db, self.viewer, 'Director', 'actor')

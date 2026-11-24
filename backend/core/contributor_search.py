@@ -30,6 +30,7 @@ KINDS = ('actor', 'staff', 'studio')
 PATHS = {'actor': 'actors', 'staff': 'person', 'studio': 'studio'}
 LIMIT = 8
 MAX_CANDIDATES = 8
+PEOPLE_POPULARITY_FLOOR = 0.1
 # Keep keystroke-triggered sorting from occupying the shared VPS's entire
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
@@ -180,7 +181,7 @@ def merge_game_matches(groups, games):
     return groups
 
 
-def ranked_results(groups, term, *, people=False):
+def ranked_results(groups, term, *, people=False, people_pending=False):
     query = term.casefold()
     def rank(item, section):
         name = item.get('name', '').casefold()
@@ -199,8 +200,17 @@ def ranked_results(groups, term, *, people=False):
         by_person = defaultdict(list)
         for section, row in sorted(candidates, key=lambda pair: rank(pair[1], pair[0])):
             by_person[canonical.get(row.get('_native'), row['key'])].append((section, row))
+        visible = []
+        for key, matches in by_person.items():
+            popularity = max((row['_popularity'] for _, row in matches if row.get('_popularity') is not None),
+                             default=PEOPLE_POPULARITY_FLOOR)
+            if popularity >= PEOPLE_POPULARITY_FLOOR:
+                visible.append((key, matches))
+        # Wait for the existing verification to settle before opening the fallback.
+        if not visible and not people_pending:
+            visible = list(by_person.items())
         cards = []
-        for key, matches in list(by_person.items())[:LIMIT]:
+        for key, matches in visible[:LIMIT]:
             best_role, best = matches[0]
             department = next((row['_department'] for _, row in matches if primary_profession(row.get('_department'))[0]), None)
             counts = {role: max((row.get('_role_works', row.get('_works', 0)) for section, row in matches
@@ -323,10 +333,11 @@ async def _discover_candidates(db, viewer, term, kind, key):
             continue
         person = known.get((f'tmdb.{provider_kind}', str(native)))
         identity = f'catalogue:{person.id}' if person else f'tmdb:{native}'
+        popularity = number(raw['popularity']) if raw.get('popularity') is not None else None
         if identity in seen[section]:
             for item in groups[section]:
                 if item['key'] == identity:
-                    item['_popularity'] = number(raw.get('popularity'))
+                    item['_popularity'] = popularity
                     item['_native'] = item.get('_native') or native
                     if section != 'studio': item['_known_for'] = raw.get('known_for') or []
                     if kind == 'people' and not primary_profession(item.get('_department'))[0]:
@@ -339,7 +350,7 @@ async def _discover_candidates(db, viewer, term, kind, key):
             item = {'key': identity, 'name': studio_name(raw['name']) if section == 'studio' else raw['name'], 'image': f'https://image.tmdb.org/t/p/w185{image}' if image else None,
                     'roles': [] if section == 'studio' else [raw.get('known_for_department') or 'Crew'],
                     'url': f'/{PATHS[section]}/{identity}'}
-        groups[section].append({**item, '_popularity': number(raw.get('popularity')),
+        groups[section].append({**item, '_popularity': popularity,
             '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {}),
             **({'_department': raw.get('known_for_department')} if kind == 'people' else {})})
         seen[section].add(identity)
@@ -406,7 +417,9 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all', *
         pending_sections = {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']}
         if group_people:
             pending_sections = {'people': pending_sections['actor'] or pending_sections['staff']}
-        return {'results': ranked_results(groups, term, people=group_people), 'partial': companies['partial'] or people['partial'],
+        return {'results': ranked_results(groups, term, people=group_people,
+                                          people_pending=pending_sections.get('people', False)),
+            'partial': companies['partial'] or people['partial'],
             'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
             'section_pending': pending_sections,
@@ -435,7 +448,8 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all', *
         people.get('pending_sections', {}).get(section, people['pending'])) for section in KINDS}
     if group_people:
         sections = {'people': sections['actor'] or sections['staff']}
-    return {'results': ranked_results(groups, term, people=group_people), 'partial': failed or companies['partial'] or people['partial'],
+    return {'results': ranked_results(groups, term, people=group_people, people_pending=sections.get('people', False)),
+            'partial': failed or companies['partial'] or people['partial'],
             'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending':pending or companies['pending'] or people['pending'],
             'section_pending':sections,
