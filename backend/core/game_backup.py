@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from core import catalogue, game_tracking
 from core.catalogue_normalize import image
+from core.game_release_bundles import original_id as release_original_id
 from core.game_types import capabilities, playable_child
 from models import User, UserProfileData
 from models.catalogue import CatalogueEntity, CatalogueIdentity
@@ -183,6 +184,8 @@ async def restore_games(db, user_id, backup, *, cancelled):
                 retained = await db.scalar(select(GameChildState).where(GameChildState.user_id == user_id, GameChildState.work_id == work.id))
                 if not existing and not retained:
                     if game.entry:
+                        if capabilities(work.attributes).game_class == 'bundle' and await release_original_id(db, work.id):
+                            raise ValueError('Track the original game for this release')
                         db.add(GameEntry(user_id=user_id, work_id=work.id, revision=1,
                             **game.entry.model_dump(include=set(ENTRY_FIELDS))))
                         await db.flush()

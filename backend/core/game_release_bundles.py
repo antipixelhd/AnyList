@@ -141,3 +141,16 @@ async def browse_originals(db, identifiers):
         .where(CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id.in_(identifiers),
                *active_edge(CatalogueRelationship)))
     return {int(native): card for native, card in rows}
+
+
+async def original_ids(db, work_ids):
+    """Resolve verified release packages without rebinding catalogue identities."""
+    if not work_ids:
+        return {}
+    rows = await db.execute(select(CatalogueRelationship.source_id, CatalogueRelationship.target_id)
+        .where(CatalogueRelationship.source_id.in_(work_ids), *active_edge(CatalogueRelationship)))
+    return dict(rows.all())
+
+
+async def original_id(db, work_id):
+    return (await original_ids(db, {work_id})).get(work_id)

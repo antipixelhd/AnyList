@@ -124,10 +124,11 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(GameFavorite(user_id=self.user.id,work_id=bundle.id));await db.commit()
             self.assertEqual(await db.scalar(select(GameEntry.total_seconds).where(GameEntry.work_id==bundle.id)),360000)
 
-    async def test_release_bundle_folds_in_both_searches_and_remains_a_detail_edition(self):
+    async def test_release_bundle_routes_to_original_and_cannot_start_separate_tracking(self):
         from core import catalogue, game_discovery
         from core.catalogue_providers import CatalogueProviders
         from core.game_browse_sources import GameBrowseSources
+        from core.game_metadata import GameMetadata
 
         provider = CatalogueProviders()
         provider._igdb_pages = AsyncMock(return_value=([], True))
@@ -144,7 +145,9 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
             bundle = await catalogue.ingest_document(db, doc, 'igdb')
             collection = await catalogue.ingest_document(db, collection_doc, 'igdb')
             bundle_id, collection_id = bundle.id, collection.id
-            db.add(GameEntry(user_id=self.user.id, work_id=bundle_id, status='playing', total_seconds=90))
+            root = await catalogue.resolve_identity(db, 'igdb.game', str(ORIGINAL['id']))
+            db.add(CatalogueRelationship(source_id=root.entity_id, target_id=bundle_id,
+                relation='recommendation', provider='igdb'))
             await db.commit()
         with patch.object(game_discovery, 'candidates', AsyncMock(return_value=[
             search_candidate(CONSOLE_BUNDLE), search_candidate(ORIGINAL), search_candidate(COLLECTION)])):
@@ -165,11 +168,50 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page['data']['rows'], [])
         self.assertEqual(browse.igdb.await_count, 2)
 
-        async with self.Session() as db:
-            self.assertEqual(await db.scalar(select(GameEntry.total_seconds).where(GameEntry.work_id == bundle_id)), 90)
-        editions = GameEditions(self.Session, SimpleNamespace(igdb=AsyncMock(return_value=[ORIGINAL])))
+        version = provider_game(334254, 'Grand Theft Auto V Enhanced', 10, first_release_date=1741046400,
+            parent_game=ORIGINAL)
+        releases = {**ORIGINAL, 'expanded_games': [version]}
+        editions = GameEditions(self.Session, SimpleNamespace(igdb=AsyncMock(return_value=[releases])))
         result = await editions.read(original['id'])
-        self.assertEqual([(row['id'], row['year']) for row in result['editions']], [(bundle_id, 2022)])
+        self.assertEqual([(row['title'], row['year']) for row in result['editions']],
+            [('Grand Theft Auto V Enhanced', 2025)])
+        self.assertNotIn(bundle_id, [row['id'] for row in result['editions']])
+
+        with (
+            patch.object(GameMetadata, 'ensure', AsyncMock(return_value=({'primary_ready': True}, False))),
+            patch.object(GameMetadata, 'resolve', AsyncMock(return_value=bundle_id)),
+            patch('core.game_background.observe_work', AsyncMock()),
+            patch('routers.games.request_game_metadata', AsyncMock()),
+        ):
+            details = await self.client.get(f'/catalogue/entities/{bundle_id}/details')
+            self.assertEqual(details.status_code, 200, details.text)
+            self.assertEqual(details.json()['subject']['catalogue_id'], original['id'])
+            self.assertTrue(details.json()['game_bundle_redirect'])
+            self.assertNotIn(bundle_id, [row['id'] for row in details.json()['relations'] + details.json()['similar']])
+            resolved = await self.client.post(f'/tracking/games/resolve/{CONSOLE_BUNDLE["id"]}')
+            self.assertEqual(resolved.json(), {'id': original['id']})
+            save = await self.client.patch(f'/tracking/games/entries/{bundle_id}', json={'status': 'planning'})
+            self.assertEqual(save.status_code, 422, save.text)
+            favorite = await self.client.put(f'/tracking/games/favorites/{bundle_id}', json={'favorite': True})
+            self.assertEqual(favorite.status_code, 422, favorite.text)
+            imported = await self.client.post('/tracking/games/import/backloggd',
+                json={'games': [{'work_id': bundle_id, 'status': 'planning'}]})
+            self.assertEqual(imported.status_code, 200, imported.text)
+            self.assertEqual(imported.json()['games'], [])
+            saved_collection = await self.client.patch(f'/tracking/games/entries/{collection_id}',
+                json={'status': 'planning'})
+            self.assertEqual(saved_collection.status_code, 200, saved_collection.text)
+
+            async with self.Session() as db:
+                # Simulate private state created before the release was classified.
+                db.add(GameEntry(user_id=self.user.id, work_id=bundle_id, status='playing', total_seconds=90, revision=1))
+                await db.commit()
+            legacy = await self.client.get(f'/catalogue/entities/{bundle_id}/details')
+            self.assertEqual(legacy.json()['subject']['catalogue_id'], bundle_id)
+            edited = await self.client.patch(f'/tracking/games/entries/{bundle_id}',
+                json={'notes': 'Existing playthrough', 'revision': 1})
+            self.assertEqual(edited.status_code, 200, edited.text)
+            self.assertEqual(edited.json()['total_seconds'], 90)
 
     async def test_release_bundle_migration_queues_same_title_candidates_for_verification(self):
         from core import catalogue

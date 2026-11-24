@@ -140,6 +140,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     """One list write per canonical game; source app counters remain independent."""
     from core import steam_targets
     from core.game_metadata import native_id
+    from core.game_release_bundles import original_ids as release_original_ids
     by_app = {row['app_id']: row for row in library}
     additions = set(add_apps or ())
     today = datetime.now(ZoneInfo(state.timezone or 'UTC')).date()
@@ -150,11 +151,16 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     selected = [app for app in dict.fromkeys(selected) if public.get(app, {}).get('steam_app_type') != 'software']
     mapping = await steam_targets.targets(db, selected)
     canonical_admission = {}
+    bundle_targets = set()
     for target in set(mapping.values()):
         work = await db.get(CatalogueEntity, target)
         canonical_admission[target] = bool(work and await native_id(db, work))
+        if work and capabilities(work.attributes).game_class == 'bundle':
+            bundle_targets.add(target)
+    for target in await release_original_ids(db, bundle_targets):
+        canonical_admission[target] = False
     # Retargeting itself moves private membership and checkpoints. Reject an
-    # orphan destination before that mutation, including ordinary progress sync.
+    # orphan or release-only destination before changing either.
     await steam_targets.retarget(db, state, {app: target for app, target in mapping.items()
         if canonical_admission[target]})
     checkpoints, groups = dict(state.checkpoints), {}
@@ -226,6 +232,8 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             steam_cache.merge_total(work, app, data['achievement_total'], now())
         groups.setdefault(work.id, (work, []))[1].append(data)
     changed = 0
+    releases = await release_original_ids(db, {work.id for work, _ in groups.values()
+        if capabilities(work.attributes).game_class == 'bundle'})
     accepted_minutes = {}
     for app in selected:
         prior = checkpoints.get(app, {})
@@ -242,7 +250,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                     steam_cache.merge_total(work,game['app_id'],game['achievement_total'],now())
         entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == state.user_id, GameEntry.work_id == work.id))
         automatic = any(game['app_id'] in additions for game in games)
-        if entry is None and not (automatic or initial and apps.difference(progress_only)):
+        if entry is None and (work.id in releases or not (automatic or initial and apps.difference(progress_only))):
             continue
         before = None if initial else await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
         created = entry is None

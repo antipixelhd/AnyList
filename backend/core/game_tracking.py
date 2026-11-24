@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import String, cast, delete, func, literal, select, text
 from sqlalchemy.orm import defer
 
+from core.game_release_bundles import original_id as release_original_id
 from core.game_time import round_game_seconds
 from core.game_types import capabilities,playable_child
 from models import User, UserProfileData
@@ -28,6 +29,8 @@ async def set_favorite(db, user_id, work_id, desired):
     """Caller holds the owner lock; a favorite does not create membership."""
     row = await db.get(GameFavorite, (user_id, work_id))
     if desired and row is None:
+        if await release_original_id(db, work_id):
+            raise HTTPException(422, 'Favorite the original game for this release')
         maximum = await db.scalar(select(func.max(GameFavorite.position)).where(GameFavorite.user_id == user_id))
         db.add(GameFavorite(user_id=user_id, work_id=work_id, position=(maximum if maximum is not None else -1)+1))
     elif not desired and row:
@@ -272,6 +275,8 @@ async def save_entry(db, user_id, work_id, patch):
     row = await db.scalar(select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id == work_id))
     if row is None and caps.game_class == 'port':
         raise HTTPException(422, 'Track the original game instead of its port')
+    if row is None and caps.game_class == 'bundle' and await release_original_id(db, work_id):
+        raise HTTPException(422, 'Track the original game for this release')
     require_revision(row, patch.revision)
     from core import game_activity
     progress_changed = bool(patch.model_fields_set & {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'})

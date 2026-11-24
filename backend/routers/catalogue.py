@@ -317,9 +317,14 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
             work = await db.get(CatalogueEntity, canonical)
     elif work.kind == 'game':
         from core.game_edition_sources import BUNDLE_ALIAS, has_private_edition
-        alias = (work.attributes or {}).get(BUNDLE_ALIAS)
-        if alias and (not current_user or not await has_private_edition(db, work.id, current_user.id)):
-            work = await db.get(CatalogueEntity, alias['work_id']) or work
+        from core.game_release_bundles import original_id
+        attrs = work.attributes or {}
+        alias = attrs.get(BUNDLE_ALIAS)
+        target = alias['work_id'] if alias else None
+        if attrs.get('game_class') == 'bundle':
+            target = await original_id(db, work.id) or target
+        if target and (not current_user or not await has_private_edition(db, work.id, current_user.id)):
+            work = await db.get(CatalogueEntity, target) or work
             bundle_redirect = work.id != entity_id
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")

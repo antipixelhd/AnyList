@@ -489,8 +489,12 @@ async def resolve_game(igdb_id: Annotated[int,Path(gt=0,le=2147483647)], db: DB,
     if not identifier:
         raise HTTPException(503, 'Game details are still loading. Please try again.')
     entity = await tracking.work(db, identifier)
-    if not capabilities(entity.attributes).searchable:
+    caps = capabilities(entity.attributes)
+    if not caps.searchable:
         raise HTTPException(422, 'This add-on does not have a separate game page')
+    if caps.game_class == 'bundle':
+        from core.game_release_bundles import original_id
+        identifier = await original_id(db, identifier) or identifier
     return {'id': identifier}
 
 

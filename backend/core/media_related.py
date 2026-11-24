@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core.catalogue_normalize import image
 from core.catalog_search import title_vote_count, matches_result_filters
-from core.game_release_bundles import EDITION_TYPE as RELEASE_BUNDLE_EDITION
+from core.game_release_bundles import EDITION_TYPE as RELEASE_BUNDLE_EDITION, original_ids as release_original_ids
 from models import Media
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueRelationship
 
@@ -49,6 +49,8 @@ async def catalogue_related(db, work):
         .order_by(CatalogueRelationship.id)))
     ids = {edge.target_id if edge.source_id == work.id else edge.source_id for edge in edges}
     targets = {row.id: row for row in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(ids)))} if ids else {}
+    release_bundles = await release_original_ids(db, {target.id for target in targets.values()
+        if target.kind == 'game' and (target.attributes or {}).get('game_class') == 'bundle'}) if work.kind == 'game' else {}
     groups = {row.id: row for row in targets.values() if row.kind in ('book_series', 'game_collection')}
     memberships = list(await db.scalars(select(CatalogueRelationship).where(
         CatalogueRelationship.target_id.in_(groups), CatalogueRelationship.relation == 'series_member',
@@ -87,7 +89,7 @@ async def catalogue_related(db, work):
         if work.kind=='game' and target.kind=='game':
             from core.game_types import capabilities
             caps = capabilities(target.attributes)
-            if not caps.independent or caps.game_class == 'port':
+            if not caps.independent or caps.game_class == 'port' or target.id in release_bundles:
                 return None
         url = f'/title/{links[target.id]}' if target.id in links else None
         if target.kind in ('game', 'book'):
@@ -110,7 +112,7 @@ async def catalogue_related(db, work):
 
     relations, similar, seen = [], [], set()
     for edge in edges:
-        if edge.relation == 'version' and edge.attributes.get('edition_type') == RELEASE_BUNDLE_EDITION and not edge.attributes.get('source_active'):
+        if edge.relation == 'version' and edge.attributes.get('edition_type') == RELEASE_BUNDLE_EDITION:
             continue
         if work.kind=='game' and edge.relation=='port':
             continue

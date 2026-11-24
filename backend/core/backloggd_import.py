@@ -12,6 +12,7 @@ from core import catalogue, game_tracking, list_categories
 from core.catalogue_normalize import image, normalize_igdb
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import BASE_FIELDS, GameBrowseSources
+from core.game_release_bundles import original_ids as release_original_ids
 from core.game_source_cache import session_factory
 from core.game_title_match import title_formats
 from core.game_types import candidate_fields, canonical_game, capabilities, igdb_game_class, mobile_only
@@ -277,6 +278,8 @@ async def preview(db, user_id, rows):
 
     roots_to_check = roots | {native for native, _ in unusable}
     existing = await existing_entries(db, user_id, {works[native].id for native in roots_to_check & works.keys()})
+    releases = await release_original_ids(db, {works[native].id for native in roots & works.keys()
+        if capabilities(works[native].attributes).game_class == 'bundle'})
     for native, title in unusable:
         work = works.get(native)
         if work is None or work.id not in existing:
@@ -295,6 +298,9 @@ async def preview(db, user_id, rows):
             summary.ignore(title, 'Unavailable as a standalone AnyList game', work.image_url)
         else:
             entry = existing.get(work.id)
+            if entry is None and work.id in releases:
+                summary.ignore(title, 'Track the original game for this release', work.image_url)
+                continue
             additions = missing_facts(facts, entry)
             if entry is not None and not additions:
                 continue
@@ -319,6 +325,8 @@ async def apply(db, user_id, games):
         CatalogueEntity.name, CatalogueEntity.image_url, CatalogueEntity.attributes)
         .where(CatalogueEntity.id.in_(ids), CatalogueEntity.kind == 'game'))}
     existing = await existing_entries(db, user_id, ids)
+    releases = await release_original_ids(db, {work.id for work in works.values()
+        if capabilities(work.attributes).game_class == 'bundle'})
     seen = set()
     for game in games:
         if game.work_id in seen:
@@ -329,6 +337,9 @@ async def apply(db, user_id, games):
             summary.ignore(work.name if work else f'Game #{game.work_id}', 'Game is no longer available')
             continue
         entry = existing.get(work.id)
+        if entry is None and work.id in releases:
+            summary.ignore(work.name, 'Track the original game for this release', work.image_url)
+            continue
         if entry is None and game.existing:
             continue
         additions = missing_facts(game, entry)
