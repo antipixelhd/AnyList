@@ -207,6 +207,7 @@ test('desktop searches both media types and all contributors without duplicating
   assert.deepEqual(requests.map(row=>row.kind),['movie','series','game','contributors','contributors']);
   const params=new URL(requests[3].url,'https://anylist.test').searchParams;
   assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'people');
+  assert.equal(params.get('group_people'),'true');
   assert.equal(new URL(requests[4].url,'https://anylist.test').searchParams.get('kind'),'studio');
 });
 

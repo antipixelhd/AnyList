@@ -93,7 +93,11 @@ export function quickSearchRequests(query:string,region?:string,showMoviesSeries
   const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
   if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
   const work_domain=showGames?(showMoviesSeries?'all':'game'):'movies_series';
-  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope,work_domain})}`});
+  for(const scope of ['people','studio'] as const) {
+    const params=new URLSearchParams({q:query,kind:scope,work_domain});
+    if(scope==='people')params.set('group_people','true');
+    requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${params}`});
+  }
   return requests;
 }
 

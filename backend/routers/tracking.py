@@ -821,18 +821,20 @@ async def quick_search_contributors(
     q: Annotated[str, Query(max_length=100)] = '',
     kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
     work_domain: Literal['all', 'movies_series', 'game'] = 'all',
+    group_people: bool = False,
     search_id: Annotated[str | None, Query(pattern=r'^[a-zA-Z0-9-]{16,64}$')] = None,
     search_generation: Annotated[int, Query(ge=0, le=9007199254740991)] = 0,
 ) -> dict:
     term = q.strip()
+    grouping = {'group_people': True} if kind == 'people' and group_people else {}
     if len(term) < 2:
-        return {'results': {'people': []} if kind == 'people' else {'actor': [], 'staff': [], 'studio': []}}
+        return {'results': {'people': []} if grouping else {'actor': [], 'staff': [], 'studio': []}}
     from core.contributor_search import search_contributors
     from core import search_demand
     from core.game_work import work_context, Priority
     value = await search_demand.begin(db, viewer.id, search_id, search_generation, term, work_domain) if search_id else None
     with search_demand.context(value), work_context(Priority.FINISH, f'search-user:{viewer.id}', replace=True):
-        return await search_contributors(db, viewer, term, kind, work_domain)
+        return await search_contributors(db, viewer, term, kind, work_domain, **grouping)
 
 
 @router.delete('/quick-search/demand/{search_id}')

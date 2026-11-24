@@ -368,7 +368,7 @@ async def settle_game_discovery(db,groups,people,companies):
         await db.commit()
 
 
-async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
+async def search_contributors(db, viewer, term, kind='all', work_domain='all', *, group_people=False):
     from core.game_access import allowed, require
     from core.game_search_samples import sample_matches
     sections = {section:False for section in KINDS}
@@ -379,9 +379,9 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
         await settle_game_discovery(db,groups,people,companies)
         pending_sections = {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']}
-        if kind == 'people':
+        if group_people:
             pending_sections = {'people': pending_sections['actor'] or pending_sections['staff']}
-        return {'results': ranked_results(groups, term, people=kind == 'people'), 'partial': companies['partial'] or people['partial'],
+        return {'results': ranked_results(groups, term, people=group_people), 'partial': companies['partial'] or people['partial'],
             'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
             'section_pending': pending_sections,
@@ -406,9 +406,9 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         groups, failed, pending = await screen_matches(db, viewer, term, kind, sections)
     sections = {section: sections[section] or (companies['pending'] if section == 'studio' else
         people.get('pending_sections', {}).get(section, people['pending'])) for section in KINDS}
-    if kind == 'people':
+    if group_people:
         sections = {'people': sections['actor'] or sections['staff']}
-    return {'results': ranked_results(groups, term, people=kind == 'people'), 'partial': failed or companies['partial'] or people['partial'],
+    return {'results': ranked_results(groups, term, people=group_people), 'partial': failed or companies['partial'] or people['partial'],
             'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending':pending or companies['pending'] or people['pending'],
             'section_pending':sections,
