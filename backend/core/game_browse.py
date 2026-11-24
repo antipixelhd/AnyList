@@ -145,6 +145,8 @@ class GameBrowse:
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
         policy = RELEASE_POLICY + ('-steam-segments-v2' if query['category']=='most_played' and not query['q'] else '')
+        if query['q']:
+            policy += '-release-bundles-v1'
         scope = digest([policy,query,limit])
         previous = None
         if cursor:

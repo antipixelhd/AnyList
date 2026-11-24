@@ -636,6 +636,16 @@ class CatalogueProviders:
                     pass
                 else:
                     doc['work']['attributes'][WORKS_BUNDLE_ATTRIBUTE] = proof
+            if game_class == 'bundle' and version is None:
+                from core.game_release_bundles import VERSION, verify
+
+                raw['_coverage']['release_bundle_version'] = VERSION
+                try:
+                    async with asyncio.timeout(8):
+                        doc['release_bundle'] = await verify(self.igdb, raw)
+                except (ProviderError, TimeoutError):
+                    # Incomplete membership leaves any previous proof intact.
+                    pass
             return doc, {"game": raw, "version": version}
         if provider == "hardcover":
             d = await self.hardcover(

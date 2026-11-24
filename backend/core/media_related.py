@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core.catalogue_normalize import image
 from core.catalog_search import title_vote_count, matches_result_filters
+from core.game_release_bundles import EDITION_TYPE as RELEASE_BUNDLE_EDITION
 from models import Media
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueRelationship
 
@@ -109,6 +110,8 @@ async def catalogue_related(db, work):
 
     relations, similar, seen = [], [], set()
     for edge in edges:
+        if edge.relation == 'version' and edge.attributes.get('edition_type') == RELEASE_BUNDLE_EDITION and not edge.attributes.get('source_active'):
+            continue
         if work.kind=='game' and edge.relation=='port':
             continue
         if work.kind=='game' and edge.target_id==work.id and edge.relation in ('dlc','expansion'):

@@ -13,7 +13,7 @@ from core.game_source_cache import GameSourceCache
 from core.game_browse_policy import evidence, provider_predicate
 from core.game_search import broader_query, matches_partial
 from core.game_release_dates import FIELDS as RELEASE_FIELDS, bounds, in_range, game_release, release, timeline_order
-from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, mobile_platform
+from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, igdb_game_class, mobile_platform
 from db import AsyncSessionLocal
 
 BASE_FIELDS = 'id,slug,name,cover.url,first_release_date,game_type.type,genres.name,platforms.name,platforms.platform_family.name,rating_count,ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'+RELEASE_FIELDS
@@ -346,10 +346,26 @@ class GameBrowseSources:
             raw=await fetch(broader_query(q) if mode else q)
             if q and offset==0 and not mode and (broader:=broader_query(q)) and not any(search_candidate(item) for item in raw):
                 raw=await fetch(broader);mode=1
+            originals = {}
+            if q:
+                bundle_ids = [str(item['id']) for item in raw if positive(item.get('id'))
+                              and not item.get('version_parent') and igdb_game_class(item) == 'bundle']
+                if bundle_ids:
+                    from core.game_release_bundles import browse_originals
+
+                    async with self.cache.sessions() as db:
+                        originals = await browse_originals(db, bundle_ids)
+                    if originals:
+                        # The current provider projection takes priority when
+                        # the original also appears in this frame.
+                        live = {item.get('id'): item for item in raw if positive(item.get('id'))}
+                        originals = {bundle: card(live[original['igdb_id']]) if original['igdb_id'] in live else original
+                                     for bundle, original in originals.items()}
             rows, seen = [], set()
             cutoff = released_before or (last.isoformat() if sort=='newest' and last and not end else None)
             for index, item in enumerate(raw, start=offset+1):
-                value = card(item, expansions=bool(q))
+                native = item.get('id')
+                value = originals[native] if native in originals else card(item, expansions=bool(q))
                 if not value or value['igdb_id'] in seen:
                     continue
                 if mode and not matches_partial(q,value['title']):
@@ -384,7 +400,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['game-timeline-v3-bundles',snapshot,q,sorted(genres),sorted(platforms),
+        key=hashlib.sha256(json.dumps(['game-timeline-v4-release-bundles',snapshot,q,sorted(genres),sorted(platforms),
             start,end,ascending,released_before]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True

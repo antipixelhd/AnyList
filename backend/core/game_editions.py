@@ -8,6 +8,7 @@ from core.catalogue_normalize import entity, image
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from core.game_source_cache import GameSourceCache
 from core.game_types import igdb_game_class, mobile_only
+from core.game_release_bundles import active_edge
 from core.game_release_dates import game_release
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 
@@ -65,14 +66,29 @@ class GameEditions:
                         ['source_id','target_id','relation','provider'])
                 await db.commit()
             return {'rows':values}
-        cached=await self.cache.get('igdb','game_newer_editions',native,load,ttl=timedelta(days=7),max_stale=timedelta(days=14))
-        values=cached['data']['rows']
-        if not values:return {'editions':[],'status':{'state':'ready'}}
         async with self.sessions() as db:
-            rows=(await db.execute(select(CatalogueEntity.id,CatalogueEntity.name,CatalogueEntity.image_url,CatalogueIdentity.external_id).join(CatalogueIdentity,
-                CatalogueIdentity.entity_id==CatalogueEntity.id).where(CatalogueIdentity.namespace=='igdb.game',
-                CatalogueIdentity.external_id.in_([row['native'] for row in values])))).all()
-        known={native:{'id':identifier,'title':title,'poster':poster} for identifier,title,poster,native in rows}
-        return {'editions':[{**known[value['native']],'year':value['year']}
-            for value in values if value['native'] in known and known[value['native']]['id']!=work_id],
-            'status':{'state':'ready'}}
+            bundles = (await db.execute(select(
+                CatalogueEntity.id, CatalogueEntity.name, CatalogueEntity.image_url,
+                CatalogueEntity.attributes['release_date'].astext
+            ).join(CatalogueRelationship, CatalogueRelationship.source_id == CatalogueEntity.id)
+                .where(CatalogueRelationship.target_id == work_id,
+                    CatalogueEntity.attributes['game_class'].astext == 'bundle',
+                    *active_edge(CatalogueRelationship)))).all()
+        editions = [dict(id=identifier, title=title, poster=poster, year=int(released[:4]))
+            for identifier, title, poster, released in bundles if released and released[:4].isdigit()]
+        try:
+            cached=await self.cache.get('igdb','game_newer_editions',native,load,ttl=timedelta(days=7),max_stale=timedelta(days=14))
+        except ProviderError:
+            if not editions:
+                raise
+        else:
+            values=cached['data']['rows']
+            if values:
+                async with self.sessions() as db:
+                    rows=(await db.execute(select(CatalogueEntity.id,CatalogueEntity.name,CatalogueEntity.image_url,CatalogueIdentity.external_id).join(CatalogueIdentity,
+                        CatalogueIdentity.entity_id==CatalogueEntity.id).where(CatalogueIdentity.namespace=='igdb.game',
+                        CatalogueIdentity.external_id.in_([row['native'] for row in values])))).all()
+                known={native:{'id':identifier,'title':title,'poster':poster} for identifier,title,poster,native in rows}
+                editions.extend({**known[value['native']],'year':value['year']}
+                    for value in values if value['native'] in known and known[value['native']]['id']!=work_id)
+        return {'editions':sorted(editions, key=lambda row: -row['year']),'status':{'state':'ready'}}
