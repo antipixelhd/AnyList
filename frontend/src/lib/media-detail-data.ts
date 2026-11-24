@@ -17,6 +17,9 @@ export function detailCreditDescription(person:DetailPerson) {
     return [performance.characters.join(' / '),attributes.join(', ')].filter(Boolean).join(' — ');
   }).filter(Boolean).join('\n')||detailCreditText(person);
 }
+export function gamePreviewCreditTitle(person:DetailPerson) {
+  return [person.name,detailCreditDescription(person)].filter(Boolean).join('\n');
+}
 export function detailCreditEpisodes(person:DetailPerson) {
   const count=person.producer_episode_count,total=person.episode_total;
   if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||

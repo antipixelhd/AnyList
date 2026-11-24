@@ -2,15 +2,38 @@
 .media-detail[data-media-kind=game] [data-credit-preview]:not(:has(> *)) { display: none; }
 
 .game-overview-credit-group:not([hidden]) ~ .game-overview-credit-group { margin-block-start: 18px; }
-.media-detail .game-overview-credit-group > .lab-section-title {
-  justify-content: flex-start;
+.game-overview-credit-group > .lab-section-title h2 { inline-size: 100%; }
+.media-detail .game-credit-heading-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 14px;
+  inline-size: 100%;
+  padding: 0;
+  font: inherit;
+  text-align: start;
 }
+.media-detail .game-credit-heading-button:not(:disabled):is(:hover,:focus-visible),
+.media-detail .game-credit-heading-button:not(:disabled):is(:hover,:focus-visible) [data-game-credit-view-all] {
+  color: var(--blue);
+}
+.media-detail .game-credit-heading-button:focus-visible { outline: none; }
 .game-overview-credit-group [data-game-preview-grid] {
   grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
 }
 .media-detail[data-media-kind=game] [data-credit-section] { scroll-margin-block-start: 72px; }
-.game-overview-credit-group [data-person-kind=studio] h3 { overflow-wrap: anywhere; }
+.media-detail .game-overview-credit-group .lab-person > div {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  padding-block: 0;
+  overflow-wrap: anywhere;
+}
+.media-detail .game-overview-credit-group .lab-person :is(h3,p) {
+  line-height: 1.5rem;
+}
 
 @media (min-width: 651px) {
   .media-detail .lab-game-times:not([data-times-sidebar]) { display: none; }
@@ -75,7 +98,6 @@
   .media-detail[data-media-kind=game] :is([data-credit-preview], [data-game-preview-grid]) .lab-person > :is(.media-person-art, img, .lab-person-initials) {
     inline-size: 40px;
   }
-  .media-detail[data-media-kind=game] :is([data-credit-preview], [data-game-preview-grid]) .lab-person > div { padding-block: 6px; }
   .media-detail[data-media-kind=game] :is([data-credit-preview], [data-game-preview-grid]) .lab-person p { margin-block-start: 3px; }
   .media-detail[data-media-kind=game] [data-credit-preview] {
     grid-template-rows: repeat(2, auto);

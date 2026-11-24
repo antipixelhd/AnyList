@@ -91,7 +91,16 @@ const yearHref=title?.year&&detailBrowseHref(title.type,{year:title.year});
 const dlcAvailable=title?.has_game_children===true;
 const gamePlatforms=gameTitle?gameMobilePlatforms(title):[];
 const requirementsAvailable=gameTitle&&hasSteamRequirements(title.game_info,gamePlatforms);
-const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(gameTitle&&!gameChild&&trackable&&signedIn?[{id:'achievements',label:'Achievements'}]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(screenTitle||gameTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[]),...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'}]:[]),...(gameTitle?[{id:'requirements',label:'PC requirements'}]:[])];
+const tabs=[
+  {id:'overview',label:'Overview'},
+  ...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),
+  ...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),
+  ...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),
+  ...(screenTitle||gameTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[]),
+  ...(gameTitle&&!gameChild&&trackable&&signedIn?[{id:'achievements',label:'Achievements'}]:[]),
+  ...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'}]:[]),
+  ...(gameTitle?[{id:'requirements',label:'PC requirements'}]:[]),
+];
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='dlc'&&!dlcAvailable)&&!(tab.id==='requirements'&&!requirementsAvailable)&&!(tab.id==='people'&&gamePeopleEmpty)&&!(tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[
@@ -167,9 +176,14 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {gameTitle?<div class="lab-people-preview lab-module" hidden={!gameCreditPreviews.some(group=>group.rows.length)&&!gamePeoplePending}>
                 <p class="detail-load-status" data-detail-people-status hidden></p>
                 {gameCreditPreviews.map(({id,label,rows,total})=><section class="game-overview-credit-group" data-game-preview-group={id} hidden={!rows.length&&!(id==='cast'&&gamePeoplePending)}>
-                  <div class="lab-section-title"><h2>{label}</h2><button class="lab-text-button" type="button" data-detail-open-tab="people" data-detail-credit-target={id} hidden={total<=rows.length} aria-label={`View all ${label.toLowerCase()}`}>View all <Icon name="arrow-right"/></button></div>
+                  <div class="lab-section-title"><h2>
+                    <button class="game-credit-heading-button" type="button" data-detail-open-tab="people" data-detail-credit-target={id} aria-controls={`credits-${id}`} disabled={!rows.length}>
+                      <span data-game-credit-label>{label}</span>
+                      <span class="lab-text-button" data-game-credit-view-all hidden={total<=rows.length} aria-hidden="true">View all <Icon name="arrow-right"/></span>
+                    </button>
+                  </h2></div>
                   <div class="lab-person-grid" data-cast-content={id==='cast'||undefined} data-credit-preview={id==='cast'||undefined} data-game-preview-grid={id!=='cast'||undefined}>
-                    {rows.map(person=><MediaDetailPerson person={person} primary/>)}
+                    {rows.map(person=><MediaDetailPerson person={person} primary gamePreview/>)}
                     {id==='cast'&&!rows.length&&gamePeoplePending&&Array.from({length:8},()=> <div class="detail-person-skeleton" aria-hidden="true"><span></span><div></div></div>)}
                   </div>
                 </section>)}
