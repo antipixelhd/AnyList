@@ -51,13 +51,17 @@ async def title_with_fallback(sessions, fetch, native, reference=None):
         return title_header(reference['value'])
 
 
-async def principals_available(sessions):
+def fresh_principal_generation():
     from core.game_imdb_enrichment import now
+    return select(GameMappingGeneration.id).where(
+        GameMappingGeneration.source == 'imdb', GameMappingGeneration.active.is_(True),
+        GameMappingGeneration.observed_at >= now() - timedelta(days=2),
+        GameMappingGeneration.coverage['principal_credits'].as_boolean().is_(True))
+
+
+async def principals_available(sessions):
     async with sessions() as db:
-        return bool(await db.scalar(select(GameMappingGeneration.id).where(
-            GameMappingGeneration.source == 'imdb', GameMappingGeneration.active.is_(True),
-            GameMappingGeneration.observed_at >= now() - timedelta(days=2),
-            GameMappingGeneration.coverage['principal_credits'].as_boolean().is_(True))))
+        return bool(await db.scalar(fresh_principal_generation()))
 
 
 async def people_samples(sessions, term):

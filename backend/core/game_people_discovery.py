@@ -20,11 +20,12 @@ from core.game_imdb_discovery import JOB as DISCOVERY_JOB
 from core.game_imdb_enrichment import now, request as admit
 from core.game_imdb_person import JOB, COMPONENT, VERSION as PERSON_VERSION
 from core.game_imdb_source import IMDbGameSource
-from core.game_imdb_snapshot import DATASET, FALLBACK_ERRORS, people_samples
+from core.game_imdb_snapshot import DATASET, FALLBACK_ERRORS, fresh_principal_generation, people_samples
 from core.game_source_cache import session_factory
 from core.game_work import job_key
 from db import AsyncSessionLocal
 from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch, MetadataSnapshot
+from models.game_mapping import GameMappingGeneration, GameMappingReference
 
 MAX_PENDING = 128
 
@@ -151,6 +152,15 @@ class GamePeopleDiscovery:
             component.coverage['omitted_rows'].as_integer() == 0,
         )
         role_coverage = component.coverage['role_coverage']
+        dataset_fields = ()
+        if fallback and not degraded:
+            # The search cache expires before the underlying principal dataset.
+            principal = select(GameMappingReference.native).where(
+                GameMappingReference.generation == GameMappingGeneration.id,
+                GameMappingReference.native == CatalogueIdentity.external_id,
+            ).correlate(GameMappingGeneration, CatalogueIdentity).exists()
+            dataset_fields = (fresh_principal_generation().where(~principal).correlate(CatalogueIdentity)
+                .exists().label('absent_from_principals'),)
         async with self.sessions() as db:
             rows = (await db.execute(select(
                 CatalogueIdentity.external_id.label('native'),
@@ -165,6 +175,7 @@ class GamePeopleDiscovery:
                 ContributorSearch.game_staff_count.label('staff_works'),
                 case((complete_roles, role_coverage['actor']['raw_source'].as_integer())).label('actor_source'),
                 case((complete_roles, role_coverage['staff']['raw_source'].as_integer())).label('staff_source'),
+                *dataset_fields,
             ).select_from(CatalogueEntity).join(CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id)
                 .outerjoin(source, and_(source.provider == 'imdb', source.kind == JOB,
                     source.external_id == CatalogueIdentity.external_id))
@@ -223,8 +234,8 @@ class GamePeopleDiscovery:
         unavailable = discovery_unavailable or bool(failed_rows)
         # A fresh principal fallback can leave extra roles unknown for an
         # established person. The caller can check whether their card is visible.
-        coverage_only = (fallback and not cached.get('stale') and not discovery_unavailable and failed_rows
-            and all((row.actor_works or row.staff_works) and row.native not in samples
+        coverage_only = (dataset_fields and not discovery_unavailable and failed_rows
+            and all((row.actor_works or row.staff_works) and row.absent_from_principals
                 and row.source_error in FALLBACK_ERRORS and not row.discovery_error for row in failed_rows))
         unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
         return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped or fallback,

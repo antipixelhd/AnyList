@@ -17,6 +17,7 @@ from core.game_imdb_person import GameIMDbPersonEnrichment, COMPONENT, JOB
 from core.game_imdb_source import IMDbGameSource
 from core.game_people_discovery import GamePeopleDiscovery
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.game_mapping import GameMappingGeneration, GameMappingReference
 
 
 @unittest.skipUnless(fixture.fixture.fixture.fixture.URL, 'Requires disposable PostgreSQL')
@@ -46,6 +47,9 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         return worker, source
 
     async def test_fresh_dataset_role_gap_keeps_a_visible_person_without_a_warning(self):
+        async with self.engine.begin() as connection:
+            await connection.run_sync(GameMappingGeneration.__table__.create, checkfirst=True)
+            await connection.run_sync(GameMappingReference.__table__.create, checkfirst=True)
         async with self.Session() as db:
             game = CatalogueEntity(kind='game', name='Saved game', attributes={'game_class': 'game'})
             person = CatalogueEntity(kind='person', name='Cold performer')
@@ -56,6 +60,8 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 CatalogueCredit(work_id=game.id, contributor_id=person.id, provider='imdb',
                     source_key='saved-writing', role='writer'),
                 MetadataSnapshot(provider='imdb', kind=JOB, external_id='nm1', error_code='forbidden'),
+                GameMappingGeneration(id='fresh-principals', source='imdb', active=True,
+                    observed_at=now(), coverage={'principal_credits': True}),
             ])
             key = f'catalogue:{person.id}'
             await db.commit()
@@ -78,8 +84,22 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(actors['unavailable'])
 
             cached['stale'] = True
-            data = (await self.client.get('/tracking/quick-search/contributors',
-                params={**params, 'work_domain': 'game'})).json()
+            game_params = {**params, 'work_domain': 'game'}
+            data = (await self.client.get('/tracking/quick-search/contributors', params=game_params)).json()
+            self.assertFalse(data['unavailable'])
+
+            async with self.Session() as db:
+                db.add(GameMappingReference(generation='fresh-principals', native='nm1', title='Cold performer'))
+                await db.commit()
+            data = (await self.client.get('/tracking/quick-search/contributors', params=game_params)).json()
+            self.assertTrue(data['unavailable'])
+
+            async with self.Session() as db:
+                generation = await db.get(GameMappingGeneration, 'fresh-principals')
+                generation.observed_at = now() - timedelta(days=3)
+                await db.delete(await db.get(GameMappingReference, ('fresh-principals', 'nm1')))
+                await db.commit()
+            data = (await self.client.get('/tracking/quick-search/contributors', params=game_params)).json()
             self.assertTrue(data['unavailable'])
 
     async def test_fresh_actor_and_crew_search_discovers_games_without_any_detail_visit(self):
