@@ -17,6 +17,9 @@ export function detailCreditDescription(person:DetailPerson) {
     return [performance.characters.join(' / '),attributes.join(', ')].filter(Boolean).join(' — ');
   }).filter(Boolean).join('\n')||detailCreditText(person);
 }
+export function gamePreviewCreditTitle(person:DetailPerson) {
+  return [person.name,detailCreditDescription(person)].filter(Boolean).join('\n');
+}
 export function detailCreditEpisodes(person:DetailPerson) {
   const count=person.producer_episode_count,total=person.episode_total;
   if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||
@@ -166,6 +169,12 @@ export function gameCrewPreview(people: DetailPerson[]) {
   const core = ordered.slice(0, musicCredit ? 3 : 4);
   if (musicCredit) core.splice(1, 0, musicCredit);
   return core.map(row => row.person);
+}
+
+export function gameStudioPreview(studios: DetailPerson[]) {
+  const developer = studios.find(studio=>/developer/i.test(roleText(studio)));
+  const publisher = studios.find(studio=>/publisher/i.test(roleText(studio)));
+  return [...new Set([developer, publisher, ...studios].filter((studio):studio is DetailPerson=>!!studio))].slice(0,4);
 }
 
 export function gameMobilePlatforms(media: Pick<DetailMedia, 'platforms' | 'releases'>) {

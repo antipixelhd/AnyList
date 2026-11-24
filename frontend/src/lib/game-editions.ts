@@ -8,6 +8,7 @@ export function mountGameEditions(root:HTMLElement,id:number,signal:AbortSignal,
   const heading=card.querySelector<HTMLElement>('[data-game-editions-heading]')!;
   const links=card.querySelector<HTMLElement>('[data-game-edition-links]')!;
   const template=card.querySelector<HTMLTemplateElement>('[data-game-edition-template]')!;
+  const relations=root.querySelector<HTMLElement>('[data-detail-related]');
   const resource=detailBackground<any>(`/api/proxy/tracking/games/works/${id}/editions`,signal,data=>{
     const entering=card.hidden;
     const rows=(data.editions||[]).filter((row:any)=>Number.isSafeInteger(row.id)&&row.id>0&&row.id!==id&&typeof row.title==='string'&&Number.isInteger(row.year));
@@ -26,6 +27,14 @@ export function mountGameEditions(root:HTMLElement,id:number,signal:AbortSignal,
       return link;
     }));
     card.hidden=!rows.length;if(entering&&rows.length)reveal(card);
+    if(relations){
+      const editionIds=new Set<string>(rows.map((row:any)=>String(row.id)));
+      const cards=[...relations.querySelectorAll<HTMLElement>('[data-game-relation-ids]')];
+      for(const relation of cards){
+        relation.hidden=relation.dataset.gameRelationIds!.split(' ').some(id=>editionIds.has(id));
+      }
+      relations.hidden=cards.every(relation=>relation.hidden);
+    }
     return data.status;
   },()=>{});
   let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;

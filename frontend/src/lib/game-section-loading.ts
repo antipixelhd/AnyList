@@ -29,12 +29,14 @@ export function paintGameSection(section:HTMLElement,hasContent:boolean,state?:D
   const error=section.querySelector<HTMLElement>('[data-game-section-error]');if(error)error.hidden=true;
 }
 
-export function bindGameSection(root:HTMLElement,section:HTMLElement,signal:AbortSignal,
+export function bindGameSection(root:HTMLElement,section:HTMLElement|HTMLElement[],signal:AbortSignal,
   resource:{retry:(afterCurrent?:boolean)=>Promise<void>;start:()=>unknown},initial?:DetailLoadState|null) {
-  const reveal = revealFor(section);
-  reveal.signal = signal;
-  if (section.getAttribute('aria-busy') === 'true') reveal.transition.begin();
-  section.querySelector('[data-game-section-retry]')?.addEventListener('click',()=>void resource.retry(),{signal});
+  for(const view of Array.isArray(section) ? section : [section]){
+    const reveal = revealFor(view);
+    reveal.signal = signal;
+    if (view.getAttribute('aria-busy') === 'true') reveal.transition.begin();
+    view.querySelector('[data-game-section-retry]')?.addEventListener('click',()=>void resource.retry(),{signal});
+  }
   // A cold primary can establish Steam/IGDB identities after an earlier optional
   // read returned unavailable. Retry then, rather than stranding the empty slot.
   const needsPrimary=gameSectionPending(initial,root.dataset.gamePrimaryPending==='true')||initial?.state==='unavailable';

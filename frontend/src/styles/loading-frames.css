@@ -47,7 +47,6 @@ button:has(> .artwork-skeleton-pulse){position:relative}
   .loading-detail-layout>aside{container-type:inline-size}
   .loading-tracking{display:grid;grid-template-columns:minmax(0,180px) 35px;grid-template-areas:'status extra' 'rating more';gap:15px 6px}
   .loading-tracking .loading-control{grid-area:status;width:100%;margin:0}.loading-tracking .loading-rating{grid-area:rating;width:100%;margin:0}
-  .detail-loading-frame .loading-game-progress{display:grid;grid-column:1/-1;min-width:0;margin-top:0}
   @container(min-width:368px){.detail-loading-frame:not([data-loading-library=true]) .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px;grid-template-areas:'status rating extra'}}
   @container(min-width:430px){.detail-loading-frame[data-loading-library=true] .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px 35px;grid-template-areas:'status rating extra more'}}
 }

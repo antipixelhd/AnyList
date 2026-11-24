@@ -16,3 +16,9 @@ export function requirementRows(info:GameInfo|null|undefined,part:'minimum'|'rec
   if(info?.requirements?.platform!=='PC')return [];
   return (info.requirements[part]||[]).filter(row=>row&&typeof row.value==='string'&&row.value.trim()&&(!row.label||typeof row.label==='string'));
 }
+export function hasSteamRequirements(info:GameInfo|null|undefined,platforms:string[]) {
+  if(!info?.steam_app_id||!/^\d+$/.test(info.steam_app_id)||info.requirements?.source!=='steam')return false;
+  const pc=/^(?:pc(?:\s*\([^)]*windows[^)]*\))?|(?:microsoft )?windows(?: pc)?|steam)$/i;
+  return (!platforms.length||platforms.some(platform=>pc.test(platform.trim())))&&
+    !!(requirementRows(info,'minimum').length||requirementRows(info,'recommended').length);
+}

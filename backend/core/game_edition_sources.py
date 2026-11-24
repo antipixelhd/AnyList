@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import aliased
 
-from core.game_types import capabilities, igdb_game_class
+from core.game_types import INDEPENDENT, capabilities, igdb_game_class
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 
 
@@ -192,8 +192,9 @@ async def original_game(db, work):
     game_class = capabilities(work.attributes).game_class
     if game_class not in EDITION_CLASSES:
         return None
+    original_classes = INDEPENDENT - {'port'} if game_class == 'port' else {'game'}
     query = select(CatalogueEntity).where(CatalogueEntity.id != work.id,
-        CatalogueEntity.kind == 'game', CatalogueEntity.attributes['game_class'].astext == 'game')
+        CatalogueEntity.kind == 'game', CatalogueEntity.attributes['game_class'].astext.in_(original_classes))
     sources = (work.attributes or {}).get(ATTRIBUTE)
     parent = None
     if isinstance(sources, dict) and (work.field_sources or {}).get(f'attributes.{ATTRIBUTE}') == 'igdb':
@@ -211,7 +212,10 @@ async def original_game(db, work):
                 (edge.attributes['edition_type'].astext == game_class)))
         query = query.where(CatalogueEntity.id.in_(originals))
     originals = list(await db.scalars(query.limit(2)))
-    return originals[0] if len(originals) == 1 else None
+    if len(originals) != 1:
+        return None
+    original = originals[0]
+    return original if game_class != 'port' or capabilities(original.attributes).independent else None
 
 
 def steam_identity(identities, preferred=None):

@@ -28,6 +28,7 @@ import {mountGameMetadata} from './game-metadata';
 import {localizeDateTimes,setLocalDateTime} from './date-time-dom';
 import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
 import {mountSeriesSeasons} from './series-seasons';
+import {mountDetailNote} from './detail-note';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -84,7 +85,7 @@ export function mountMediaDetail() {
   const loadAchievements=mountDetailAchievements(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
-  if(root.dataset.mediaKind==='game'){mountGameEditions(root,info.id,signal,info.gamePrimaryPending);mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
+  if(root.dataset.mediaKind==='game'){mountGameEditions(root,info.id,signal,info.gamePrimaryPending);mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);}
   if(info.backgroundAvailable&&root.dataset.mediaKind!=='game'){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{
@@ -258,7 +259,7 @@ export function mountMediaDetail() {
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const panelGroup = root.querySelector<HTMLElement>('[data-detail-panels]')!;
   const selectTab = (id: string, animate = true) => {
-    const tab = tabs.find(tab => tab.dataset.detailTab === id && !tab.disabled);
+    const tab = tabs.find(tab => tab.dataset.detailTab === id && !tab.disabled && !tab.hidden);
     if (!tab) return;
     if (!animate || tab.getAttribute('aria-selected') !== 'true') {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
@@ -275,10 +276,20 @@ export function mountMediaDetail() {
     if(id==='dlc')loadDlc();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
+  const requirementsTab=tabs.find(tab=>tab.dataset.detailTab==='requirements');
+  if(requirementsTab&&info.gameInfo)mountGameInfo(root,info.id,signal,info.gameInfo,available=>{
+    if(requirementsTab.hidden===!available)return;
+    const panel=panels.find(panel=>panel.dataset.detailPanel==='requirements');
+    const focused=document.activeElement===requirementsTab||panel?.contains(document.activeElement);
+    if(!available&&requirementsTab.getAttribute('aria-selected')==='true')selectTab('overview');
+    requirementsTab.hidden=requirementsTab.disabled=!available;
+    if(!available&&focused)tabs[0]?.focus({preventScroll:true});
+    if(available&&new URLSearchParams(location.search).get('tab')==='requirements')selectTab('requirements',false);
+  });
   tabs.forEach((tab,index) => {
     tab.addEventListener('click', () => selectTab(tab.dataset.detailTab!), {signal});
     tab.addEventListener('keydown', event => {
-      const enabled=tabs.filter(item=>!item.disabled),position=enabled.indexOf(tab);
+      const enabled=tabs.filter(item=>!item.disabled&&!item.hidden),position=enabled.indexOf(tab);
       const next = event.key === 'ArrowRight' ? (position+1)%enabled.length : event.key === 'ArrowLeft' ? (position-1+enabled.length)%enabled.length : event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length-1 : null;
       if (next == null) return;
       event.preventDefault(); enabled[next].focus(); selectTab(enabled[next].dataset.detailTab!);
@@ -286,14 +297,27 @@ export function mountMediaDetail() {
   });
   root.querySelectorAll<HTMLButtonElement>('[data-detail-open-tab]').forEach(button => button.addEventListener('click', () => {
     selectTab(button.dataset.detailOpenTab!);
+    const target=button.dataset.detailCreditTarget;
+    const section=target&&root.querySelector<HTMLElement>(`[data-credit-section="${target}"]`);
+    if(section&&!section.hidden&&section.getClientRects().length){
+      const more=section.querySelector<HTMLButtonElement>('[data-credit-toggle]:not([hidden])[aria-expanded="false"]');
+      more?.click();
+      const heading=section.querySelector<HTMLElement>('[data-credit-heading]')!;
+      heading.tabIndex=-1;
+      heading.focus({preventScroll:true});
+      section.scrollIntoView({block:'start'});
+      return;
+    }
     tabs.find(tab=>tab.dataset.detailTab===button.dataset.detailOpenTab)?.focus({preventScroll:true});
   }, {signal}));
 
   const favorite = root.querySelector<HTMLButtonElement>('[data-favorite-toggle]');
   const library = root.querySelector<HTMLButtonElement>('[data-library-toggle]');
-  const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
-  let noteDirty = false;
-  note?.addEventListener('input',()=>{noteDirty=true;},{signal});
+  const syncNote = mountDetailNote(root,async notes=>{
+    if (!title) throw new Error('The entry could not be loaded.');
+    const saved = await editorStore.write(title,{notes},undefined,{keepalive:true});
+    return saved.notes ?? '';
+  },signal);
   let displayedProgress = title?.entry?.progress ?? null;
   let projectedSeasons:DetailSeason[] | null = null;
   let seasonRevision=0;
@@ -354,7 +378,7 @@ export function mountMediaDetail() {
       library.dataset.desired=String(active); setFeedbackPressed(library,active,editorStore.hasPendingWrites(state),signal);
       library.title=active?'Remove from library':'Add to library'; library.setAttribute('aria-label',library.title);
     }
-    if (note && !noteDirty) note.value=state.entry?.notes || '';
+    syncNote?.(state.entry?.notes ?? '');
     root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
     const average=root.querySelector<HTMLInputElement>('[data-season-average]');
     if(average)average.checked=state.entry?.rating_mode==='average';
@@ -397,14 +421,6 @@ export function mountMediaDetail() {
     void editorStore.writeLibrary(title,desired).then(saved=>{
       if (title?.editor_library?.desired===saved.desired) showToast({message:desired?'Added to library.':'Removed from library.',kind:'success',key:'detail-library'});
     }).catch(error=>showActionFailure('library',title?.title,error));
-  },{signal});
-  root.querySelector<HTMLButtonElement>('[data-detail-save-note]')?.addEventListener('click',async event=>{
-    if (!title || !note) return;
-    const button=event.currentTarget as HTMLButtonElement;
-    const notes=note.value; button.disabled=true; button.setAttribute('aria-busy','true');
-    try { await editorStore.write(title,{notes}); if (note.value===notes) noteDirty=false; showToast('Notes saved.','success'); }
-    catch (error) { showActionFailure('note',null,error); }
-    finally { button.disabled=false; button.removeAttribute('aria-busy'); }
   },{signal});
 
   loadDetailImages=mountDetailImages(root,info,signal);

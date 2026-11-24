@@ -36,6 +36,45 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_port_details_resolve_to_parent_and_ports_cannot_create_list_entries(self):
+        from core.game_metadata import GameMetadata
+
+        async with self.Session() as db:
+            port = CatalogueEntity(kind='game', name='Console port', attributes={'game_class':'port'})
+            orphan = CatalogueEntity(kind='game', name='Unresolved port', attributes={'game_class':'port'})
+            db.add_all([port, orphan])
+            await db.flush()
+            port_id, orphan_id = port.id, orphan.id
+            db.add_all([
+                CatalogueRelationship(source_id=port_id, target_id=self.base, relation='port', provider='igdb'),
+                CatalogueRelationship(source_id=self.base, target_id=port_id, relation='recommendation', provider='igdb'),
+            ])
+            await db.commit()
+        with (
+            patch.object(GameMetadata,'ensure',AsyncMock(return_value=({'primary_ready':True},False))),
+            patch('core.game_background.observe_work',AsyncMock()),
+        ):
+            details = await self.client.get(f'/catalogue/entities/{port_id}/details')
+            missing = await self.client.get(f'/catalogue/entities/{orphan_id}/details')
+        self.assertEqual(details.status_code, 200, details.text)
+        self.assertEqual(details.json()['subject']['catalogue_id'], self.base)
+        self.assertNotIn(port_id, {entry['id'] for entry in details.json()['relations']})
+        self.assertNotIn(port_id, {entry['id'] for entry in details.json()['similar']})
+        self.assertEqual(missing.status_code, 404)
+
+        save = await self.client.patch(f'/tracking/games/entries/{port_id}', json={'status':'planning','revision':None})
+        favorite = await self.client.put(f'/tracking/games/favorites/{port_id}', json={'favorite':True})
+        self.assertEqual(save.status_code, 422, save.text)
+        self.assertEqual(favorite.status_code, 422, favorite.text)
+        self.assertFalse((await self.client.get(f'/tracking/games/works/{port_id}')).json()['listed'])
+
+        async with self.Session() as db:
+            db.add(GameEntry(user_id=self.user.id, work_id=port_id, status='planning', revision=1))
+            await db.commit()
+        edit = await self.client.patch(f'/tracking/games/entries/{port_id}', json={'notes':'Existing port note','revision':1})
+        self.assertEqual(edit.status_code, 200, edit.text)
+        self.assertEqual(edit.json()['notes'], 'Existing port note')
+
     async def test_background_mapping_starts_after_the_response_session_closes(self):
         from routers import games
 

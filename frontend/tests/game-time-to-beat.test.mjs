@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {estimatedHours,completionCategories} from '../src/lib/game-time-to-beat.ts';
 
 test('completion categories retain independent provider estimates and agreed labels',()=>{
-  assert.deepEqual(completionCategories,[['main_story_seconds','Main Story'],['main_sides_seconds','Main + Sides'],['completionist_seconds','Completionist']]);
+  assert.deepEqual(completionCategories,[['main_story_seconds','Main story'],['main_sides_seconds','Main + Sides'],['completionist_seconds','Completionist']]);
 });
 
 test('unknown or zero estimates stay absent and source seconds are displayed as time',()=>{
