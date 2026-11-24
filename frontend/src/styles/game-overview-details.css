@@ -45,7 +45,7 @@
   .game-mobile-facts dd { margin: 3px 0 0; color: var(--bright); font: 500 13px/17px var(--font-body); }
   .game-mobile-facts [data-mobile-game-platforms] { flex: 1 1 104px; min-inline-size: 0; }
 
-  .media-detail[data-media-kind=game] :is(.game-requirements,[data-game-releases]) {
+  .media-detail[data-media-kind=game] [data-game-releases] {
     padding: 4px 20px;
     border-radius: var(--lab-radius);
     background: var(--panel);
@@ -53,10 +53,6 @@
   .media-detail[data-media-kind=game] [data-game-releases] { order: 6; }
   .media-detail[data-media-kind=game] .media-releases p { gap: 10px; padding-block: 8px; }
   .media-detail[data-media-kind=game] .media-releases p:last-child { border-block-end: 0; }
-  .media-detail[data-media-kind=game] .game-requirements { order: 10; }
-  .game-requirements #game-requirements-content { padding-block-end: 14px; }
-  .media-detail[data-mobile-disclosures-ready] .game-requirements .lab-section-title { justify-content: end; margin-block-end: 8px; }
-  .media-detail[data-mobile-disclosures-ready] .game-requirements h2 { display: none; }
   .game-requirements .game-requirements-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .game-requirements .game-requirements-grid h3 { margin-block-end: 6px; }
   .game-requirements .game-requirements-grid dl { gap: 6px; }

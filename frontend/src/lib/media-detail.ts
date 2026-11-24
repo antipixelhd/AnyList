@@ -85,7 +85,7 @@ export function mountMediaDetail() {
   const loadAchievements=mountDetailAchievements(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
-  if(root.dataset.mediaKind==='game'){mountGameEditions(root,info.id,signal,info.gamePrimaryPending);mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
+  if(root.dataset.mediaKind==='game'){mountGameEditions(root,info.id,signal,info.gamePrimaryPending);mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);}
   if(info.backgroundAvailable&&root.dataset.mediaKind!=='game'){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{
@@ -259,7 +259,7 @@ export function mountMediaDetail() {
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const panelGroup = root.querySelector<HTMLElement>('[data-detail-panels]')!;
   const selectTab = (id: string, animate = true) => {
-    const tab = tabs.find(tab => tab.dataset.detailTab === id && !tab.disabled);
+    const tab = tabs.find(tab => tab.dataset.detailTab === id && !tab.disabled && !tab.hidden);
     if (!tab) return;
     if (!animate || tab.getAttribute('aria-selected') !== 'true') {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
@@ -276,10 +276,20 @@ export function mountMediaDetail() {
     if(id==='dlc')loadDlc();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
+  const requirementsTab=tabs.find(tab=>tab.dataset.detailTab==='requirements');
+  if(requirementsTab&&info.gameInfo)mountGameInfo(root,info.id,signal,info.gameInfo,available=>{
+    if(requirementsTab.hidden===!available)return;
+    const panel=panels.find(panel=>panel.dataset.detailPanel==='requirements');
+    const focused=document.activeElement===requirementsTab||panel?.contains(document.activeElement);
+    if(!available&&requirementsTab.getAttribute('aria-selected')==='true')selectTab('overview');
+    requirementsTab.hidden=requirementsTab.disabled=!available;
+    if(!available&&focused)tabs[0]?.focus({preventScroll:true});
+    if(available&&new URLSearchParams(location.search).get('tab')==='requirements')selectTab('requirements',false);
+  });
   tabs.forEach((tab,index) => {
     tab.addEventListener('click', () => selectTab(tab.dataset.detailTab!), {signal});
     tab.addEventListener('keydown', event => {
-      const enabled=tabs.filter(item=>!item.disabled),position=enabled.indexOf(tab);
+      const enabled=tabs.filter(item=>!item.disabled&&!item.hidden),position=enabled.indexOf(tab);
       const next = event.key === 'ArrowRight' ? (position+1)%enabled.length : event.key === 'ArrowLeft' ? (position-1+enabled.length)%enabled.length : event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length-1 : null;
       if (next == null) return;
       event.preventDefault(); enabled[next].focus(); selectTab(enabled[next].dataset.detailTab!);
