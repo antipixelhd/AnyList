@@ -67,8 +67,9 @@ function isBrowseHome(url:URL) {
   return /^\/browse\/?$/.test(url.pathname)&&!url.search&&!url.hash;
 }
 
-export function browseReturnTarget(url:URL, lastBrowse:string|undefined) {
-  return lastBrowse&&isBrowseHome(url)?new URL(lastBrowse):undefined;
+export function browseReturnTarget(url:URL, lastBrowse:string|undefined, source?:Pick<Element,'matches'>|null) {
+  const opensBrowse = source?.matches('[data-browse-home], [data-mobile-item=browse], [data-browse-category]');
+  return lastBrowse && isBrowseHome(url) && !opensBrowse ? new URL(lastBrowse) : undefined;
 }
 
 export function returnViewKey(url:URL) {

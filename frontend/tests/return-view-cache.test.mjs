@@ -50,3 +50,13 @@ test('the generic Browse link resumes the last view while explicit Browse links 
   assert.equal(browseReturnTarget(url('/browse/games'),last),undefined);
   assert.equal(browseReturnTarget(url('/browse'),undefined),undefined);
 });
+
+test('Browse navigation opens the requested category even with a retained Series view',()=>{
+  const target=new URL('https://example.test/browse');
+  const retained='https://example.test/browse?type=series&sort=trending';
+  for (const selector of ['[data-browse-home]', '[data-mobile-item=browse]', '[data-browse-category]']) {
+    const source={matches:selectors=>selectors.split(', ').includes(selector)};
+    assert.equal(browseReturnTarget(target,retained,source),undefined,selector);
+  }
+  assert.equal(browseReturnTarget(target,retained,{matches:()=>false}).href,retained);
+});

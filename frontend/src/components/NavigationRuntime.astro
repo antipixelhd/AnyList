@@ -417,7 +417,9 @@
       state.alignListLanding = event.navigationType !== 'traverse';
       const key = keyFor(event.to);
       state.predictionNavigation=undefined;
-      const lastBrowse=event.navigationType!=='traverse'&&event.to.origin===location.origin?browseReturnTarget(event.to,lastBrowseView):undefined;
+      const lastBrowse=event.navigationType!=='traverse'&&event.to.origin===location.origin
+        ? browseReturnTarget(event.to,lastBrowseView,source)
+        : undefined;
       const destinationKey=returnViewKey(event.to);
       const browseKey=lastBrowse&&returnViewKey(lastBrowse);
       const retainedKey=browseKey&&returnViews.get(browseKey)?browseKey:destinationKey;
