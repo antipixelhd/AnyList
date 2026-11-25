@@ -64,6 +64,10 @@ Optional references:
 - Can be found in the local .env variable if needed
 
 ## Testing
+For signed-in beta browser checks, use `ANYLIST_BETA_TEST_EMAIL` and
+`ANYLIST_BETA_TEST_PASSWORD` from the local `.env` in an isolated browser.
+Keep the credentials out of Git and logs.
+
 Tests use a separate disposable database. Never point tests at a preview or
 production DB. Keep `.env.providers` and `.cloud-runtime` out of Git and logs;
 server metadata keys are private environment defaults, not database seed data.
