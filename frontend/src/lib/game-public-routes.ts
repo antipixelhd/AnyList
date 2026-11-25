@@ -12,6 +12,9 @@ export function approvedGamesPage(url:URL){
 }
 
 /** Bounded tab snapshots may be reused after fresh approval/profile checks. */
+export const personPagePath=(path:string)=>/^\/(?:actors|person)\/(?:catalogue|tmdb)(?::|%3A)[1-9]\d*\/?$/i.test(path);
+
 export function reusableGamesPage(url:URL){
-  return /^\/(?:browse\/games|user\/[^/]+\/(?:games|stats\/games))\/?$/.test(url.pathname);
+  return /^\/(?:browse\/games|user\/[^/]+\/(?:games|stats\/games))\/?$/.test(url.pathname)
+    || personPagePath(url.pathname)&&approvedGamesPage(url);
 }

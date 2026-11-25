@@ -5,7 +5,7 @@
   import { mutationFetch } from '../lib/mutation-fetch';
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
-  import {approvedGamesPage,reusableGamesPage} from '../lib/game-public-routes';
+  import {approvedGamesPage,personPagePath,reusableGamesPage} from '../lib/game-public-routes';
   import {profilePanelKey} from '../lib/profile-panel';
   import {guardFrontendBuild} from '../lib/frontend-build';
   import {snapshotHasGames,authorizeGameSnapshot} from '../lib/navigation-games-access';
@@ -167,6 +167,7 @@
     });
     clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
     clone.querySelectorAll('[data-route-pending]').forEach(element => element.removeAttribute('data-route-pending'));
+    clone.querySelectorAll('[data-contributor-pointer-hover]').forEach(element=>element.removeAttribute('data-contributor-pointer-hover'));
     clone.querySelectorAll('[data-toast-host]').forEach(element => element.replaceChildren());
     clone.querySelectorAll('[data-return-view]').forEach(element=>element.removeAttribute('data-return-view'));
     return '<!doctype html>' + clone.outerHTML;
@@ -278,8 +279,8 @@
         hours:row?.querySelector('[data-game-list-hours]')?.textContent?.trim().replace(/^—$/,'')||null,
         achievement:row?.querySelector('[data-game-list-achievements][data-known="true"]')?.textContent?.trim()||null,
       }:undefined;
-      if(title)detailHints.set(url,{kind:['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
-        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
+      if(title)detailHints.set(url,{kind:destination.kind==='person'?'person':['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
+        poster:known?.poster||image?.currentSrc||image?.getAttribute('src')||image?.dataset.deferredSrc,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
         heading:{year:known?.year||row?.dataset.detailYear||row?.querySelector('[data-year]')?.textContent?.trim(),
           genres:known?.genres,originalTitle:known?.original_title,tagline:known?.tagline,creators:known?.detail_creators,
           primaryPending:kind==='game'?known?.game_metadata_status?.primary_ready===false:known?.primary_status?.pending}});
@@ -319,6 +320,7 @@
         if(game){state.gameIntent!.warm(game);return;}
       }
       if(url.origin!==location.origin||approvedGamesPage(url)&&!reusableGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
+      if(personPagePath(url.pathname)&&approvedGamesPage(url)&&document.body.dataset.gamesApproved!=='true')return;
       if(link.closest('[data-profile-shell]')&&profilePanelKey(url))return;
       if(link.hasAttribute('data-browse-type')&&link.closest('[data-browse-shell]'))return;
       if(url.pathname==='/discover-title'){
@@ -449,7 +451,7 @@
       }
       const resolving=host?.querySelector<HTMLElement>('[data-loading-destination]')?.dataset.loadingDestination===event.to.href;
       if(destination&&host&&!resolving&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
-        &&document.querySelector('[data-detail-loading-template]')){
+        &&document.querySelector(destination.kind==='person'?'[data-person-loading-template]':'[data-detail-loading-template]')){
         clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
       }
       if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){

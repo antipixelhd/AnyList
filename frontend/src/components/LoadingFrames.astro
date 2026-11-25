@@ -5,3 +5,23 @@ import '../styles/detail-background.css';
 import '../styles/loading-frames.css';
 ---
 <template data-detail-loading-template><DetailLoadingFrame /></template>
+<template data-person-loading-template>
+  <section class="people-loading-frame" aria-busy="true" aria-label="Loading person">
+    <div class="page-width loading-person-layout">
+      <div class="loading-person-portrait loading-surface" aria-hidden="true"><img data-loading-poster alt="" hidden /></div>
+      <div class="loading-person-content">
+        <h1 data-loading-title hidden></h1>
+        <div class="loading-person-name loading-surface" aria-hidden="true"></div>
+        <div class="loading-person-heading loading-surface" aria-hidden="true"></div>
+        <div class="loading-person-filters" aria-hidden="true"><span class="loading-surface"></span><span class="loading-surface"></span></div>
+        <div class="loading-person-credits" aria-hidden="true">
+          <div class="loading-surface"></div><div class="loading-surface"></div><div class="loading-surface"></div>
+        </div>
+        <div class="loading-detail-feedback">
+          <p role="status" data-loading-status class="loading-announcement">Loading credits…</p>
+          <button type="button" class="button-secondary" data-loading-retry hidden>Try again</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>

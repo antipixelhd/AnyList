@@ -10,9 +10,12 @@ test('Games routing reachability is independent of backend approval',()=>{
   assert.equal(allowed('POST','/api/proxy/tracking/games/resolve/1960'),true);
 });
 
-test('only Browse and profile Games tabs permit snapshots behind fresh authorization',()=>{
-  for(const path of ['/browse/games','/user/alex/games','/user/alex/stats/games'])assert(reusableGamesPage(new URL(path,'https://example.test')));
-  for(const path of ['/games/1','/discover-game','/actors/catalogue:1?media_type=game','/user/alex/games/private'])assert.equal(reusableGamesPage(new URL(path,'https://example.test')),false);
+test('Games People portfolios use the same authorized reuse as Browse and profile tabs',()=>{
+  for(const path of ['/browse/games','/user/alex/games','/user/alex/stats/games',
+    '/actors/catalogue:1?media_type=game','/person/tmdb%3A2?domain=game'])
+    assert(reusableGamesPage(new URL(path,'https://example.test')));
+  for(const path of ['/games/1','/discover-game','/actors/catalogue:1','/studio/catalogue:1?media_type=game','/user/alex/games/private'])
+    assert.equal(reusableGamesPage(new URL(path,'https://example.test')),false);
 });
 
 test('Games documents always require a fresh authorized navigation',()=>{
