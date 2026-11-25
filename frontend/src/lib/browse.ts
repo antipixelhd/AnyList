@@ -293,7 +293,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     heading.append(headingLink);
     header.append(heading, link);
     cards.className = "browse-grid";
-    render(section.results, cards, false);
+    // Older cached shelves can still carry season captions outside Trending and Newest.
+    const showSeason = section.filters.sort === 'trending' || section.filters.sort === 'newest';
+    const rows = showSeason ? section.results : section.results.map(item =>
+      item.series_season ? {...item, series_season:undefined} : item);
+    render(rows, cards, false);
     container.append(header, cards);
     if (!section.results.length) {
       const message = document.createElement("p");
