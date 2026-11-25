@@ -55,17 +55,20 @@ def season_context(number, *evidence, release_date=None):
 
 
 def ranked_season(*evidence, today):
+    scheduled = None
     for data in evidence:
         sources = (data, *(other for other in evidence if other is not data))
         _, upcoming_episode = current_airing_episode(data, (), today=today)
         if upcoming_episode:
             return season_context(upcoming_episode['season_number'], *sources)
         started = set()
+        has_first_season = data.get('number_of_seasons') == 1
         for season in regular_seasons(data):
             number = season['season_number']
             value = known_date(season.get('air_date')) or known_date(season.get('year'))
-            if not value and number == 1:
-                value = known_date(data.get('first_air_date'))
+            if number == 1:
+                has_first_season = True
+                value = value or known_date(data.get('first_air_date'))
             if value and window(value)[1] <= today:
                 started.add(number)
         last = episode(data, 'last_episode_to_air')
@@ -76,7 +79,17 @@ def ranked_season(*evidence, today):
                 started.add(1)
         if started:
             return season_context(max(started), *sources)
-    return None
+        if scheduled is None:
+            next_episode = episode(data, 'next_episode_to_air')
+            has_first_season = has_first_season or (
+                next_episode.get('season_number') == 1 and next_episode.get('episode_number') == 1)
+            planned = data.get('status') in ('Planned', 'In Production', 'Post Production')
+            if has_first_season or planned:
+                first = season_context(1, *sources)
+                bounds = window(first.get('date'))
+                if (bounds and bounds[1] > today) or (planned and has_first_season and not bounds):
+                    scheduled = first
+    return scheduled
 
 
 def apply_event_season(row, show_season, *evidence):

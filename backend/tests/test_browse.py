@@ -64,6 +64,17 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(ranked_season(data, today=date(2025, 3, 17)), {'number': 2, 'name': 'Second Act'})
         self.assertIsNone(ranked_season({'first_air_date': '2010-03-01'}, today=date(2025, 3, 17)))
 
+    def test_ranked_season_can_show_an_announced_first_season_before_it_airs(self):
+        data = {'status': 'In Production', 'first_air_date': '2025-12',
+                'seasons': [{'season_number': 1, 'name': 'First Arc'}]}
+        today = date(2025, 3, 17)
+        self.assertEqual(ranked_season(data, today=today),
+                         {'number': 1, 'name': 'First Arc', 'date': '2025-12'})
+        del data['first_air_date']
+        self.assertEqual(ranked_season(data, today=today), {'number': 1, 'name': 'First Arc'})
+        cached = {'seasons': [{'season_number': 2, 'air_date': '2025-01-03'}]}
+        self.assertEqual(ranked_season(data, cached, today=today), {'number': 2, 'date': '2025-01-03'})
+
     def test_provider_vote_prefilter_does_not_eliminate_popularity_qualifiers(self):
         params = remote_params('movie', page=1, **FILTERS, min_votes=250, min_popularity=25)
         self.assertNotIn('vote_count.gte', params)

@@ -220,6 +220,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
 class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_new_http_client_reuses_completed_public_selection_without_reusing_viewer_state(self):
         import json,httpx
+        from core import tmdb
         from test_statistics_pg import StatisticsDatabaseTests
         from models import User,Media
         from models.base import MediaType
@@ -227,6 +228,7 @@ class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         fixture=StatisticsDatabaseTests(methodName='runTest')
         directory=self.enterContext(TemporaryDirectory())
         self.enterContext(patch.object(discovery,'_snapshots',ReleaseSnapshots(lambda:Path(directory))))
+        self.enterContext(patch.object(tmdb,'_cache',tmdb._TTLCache()))
         discovery._cache._store.clear()
         await fixture.asyncSetUp()
         try:
@@ -243,10 +245,15 @@ class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 await db.commit()
             raw=dict(id=1000,title='Shared movie',name='Shared series',popularity=80,vote_count=500,
                 release_date=date.today().isoformat(),first_air_date=date.today().isoformat(),genre_ids=[18],runtime=100)
-            async def provider(url,**kwargs):
-                return {'results':[raw],'total_pages':1} if '/discover/' in url else raw
+            async def provider(client,url,headers,params,retries):
+                if '/discover/' in url:
+                    return {'results':[raw],'total_pages':1}
+                if '/tv/' in url:
+                    return {**raw, 'seasons': [{'season_number':1, 'name':'First Arc',
+                                               'air_date':raw['first_air_date']}]}
+                return raw
             async def provider_key(db,viewer_id):return f'key-for-{viewer_id}'
-            with patch('core.tmdb._get',AsyncMock(side_effect=provider)) as read, \
+            with patch('core.tmdb._request',AsyncMock(side_effect=provider)) as read, \
                  patch('core.settings_store.get_user_tmdb_key',side_effect=provider_key), \
                  patch('core.external_scores.effective_mdblist_key',AsyncMock(return_value='fixture')), \
                  patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=([raw],False))):
@@ -268,8 +275,13 @@ class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     rows=[row for update in updates for row in update['section']['results']]
                     self.assertTrue(rows)
                     self.assertTrue(all(row['score'] is None and row['list_status'] is None for row in rows))
+                    if kind=='series':
+                        ranked=next(update['section']['results'] for update in updates if update['index']==0)
+                        self.assertEqual(ranked[0]['series_season'],
+                            {'number':1, 'name':'First Arc', 'date':raw['first_air_date']})
         finally:
             await discovery.close()
+            await tmdb.close()
             await fixture.asyncTearDown()
 
     async def test_stream_keeps_private_state_scoped_and_respects_guest_browsing(self):
