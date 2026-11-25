@@ -422,8 +422,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           if(count)count.textContent=String(data.list_count||0);
           const kicker=root.querySelector<HTMLElement>('[data-contributor-kicker]')!;
           if(isPerson){
-            kicker.textContent=next.primary_label||'';
-            kicker.hidden=!next.primary_label;
+            data.primary_label=next.primary_label;
+            kicker.textContent=data.primary_label||'';
           }else{
             const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
             roles.textContent=data.roles.slice(0,4).join(' / ');roles.hidden=!data.roles.length;
@@ -518,6 +518,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       data.total=next.total;data.list_count=next.list_count;data.known_works=next.known_works;
+      if(isPerson){
+        data.primary_label=next.primary_label;
+        root.querySelector<HTMLElement>('[data-contributor-kicker]')!.textContent=data.primary_label||'';
+      }
       paintAvailability();
       const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
       more.hidden=!data.has_more;updateEmpty();

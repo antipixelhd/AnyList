@@ -18,13 +18,19 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             db.add_all([CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id='nm1',source='imdb'),
                 CatalogueIdentity(entity_id=self.person_id,namespace='tmdb.person',external_id='77',source='tmdb')])
+            person=await db.get(CatalogueEntity,self.person_id)
+            person.attributes={**person.attributes,'known_for_department':'Directing'}
             await db.commit()
         self.key_mock.return_value='fixture'
         with patch('core.tmdb.get_person_profile',AsyncMock(side_effect=AssertionError('Unrelated profile blocks games'))) as profile:
-            result=await self.request(media_type='game')
+            result=await self.request('person',media_type='game',role='actor')
             self.assertEqual(result.status_code,200,result.text)
             self.assertEqual(len(result.json()['works']),2)
             self.assertEqual(result.json()['game_person_status']['id'],'nm1')
+            self.assertEqual(result.json()['primary_label'],'Voice Actor')
+            staff=await self.request('person',media_type='game',role='staff')
+            self.assertEqual(staff.status_code,200,staff.text)
+            self.assertEqual(staff.json()['primary_label'],'Composer')
             profile.assert_not_awaited()
 
     async def test_compilation_credits_qualify_in_index_and_portfolio(self):

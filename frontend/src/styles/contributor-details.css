@@ -35,6 +35,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-main { min-width:0; position:relative; }
 .contributor-heading { --text:#aabdd1; --muted:#70869e; --bright:var(--white); padding:24px 0 32px; }
 .contributor-kicker { margin:0 0 10px; color:var(--blue); font-size:13px; }
+.is-person .contributor-kicker { line-height:1.5; min-block-size:1.5em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .contributor-heading h1 { font-size:clamp(30px,4vw,46px); letter-spacing:-.025em; line-height:1.15; color:var(--bright); margin:0 0 14px; }
 .contributor-roles { margin:0 0 20px; color:var(--muted); line-height:1.6; }
 .contributor-list-link { display:inline-flex; align-items:center; gap:10px; color:var(--text); font-size:14px; }

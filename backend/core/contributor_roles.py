@@ -41,3 +41,16 @@ def preferred_role(department, counts, *, fallback='actor'):
     if counts.get('actor', 0) != counts.get('staff', 0):
         return max(PERSON_ROLES, key=lambda role: counts.get(role, 0))
     return fallback
+
+
+def game_primary_profession(roles, kind, department):
+    """Use the roles on eligible game credits for the selected portfolio."""
+    labels = {primary_profession(role)[1] or role for role in roles}
+    if kind == 'actor':
+        for performance in ('Actor', 'Voice Actor'):
+            if performance in labels:
+                return performance
+    if len(labels) == 1:
+        return next(iter(labels))
+    _, preferred = primary_profession(department)
+    return preferred if preferred in labels else None

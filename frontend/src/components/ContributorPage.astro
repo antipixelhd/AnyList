@@ -88,7 +88,7 @@ listLink.set('list_scope','in'); listLink.set('view',view);
         {data.links.length > 0 && <nav class="contributor-links" aria-label="External links">{data.links.map(link => <a href={link.href} target="_blank" rel="noreferrer">{link.label}<Icon name="external" /></a>)}</nav>}
       </aside>
       <div class="contributor-main">
-        <header class="contributor-heading"><p class="contributor-kicker" data-contributor-kicker hidden={isPerson && !data.primary_label}>{isPerson ? data.primary_label : games ? 'Game studio' : 'Production studio'}</p><h1>{data.name}</h1>
+        <header class="contributor-heading"><p class="contributor-kicker" data-contributor-kicker>{isPerson ? data.primary_label : games ? 'Game studio' : 'Production studio'}</p><h1>{data.name}</h1>
           <p class="contributor-roles" data-contributor-roles hidden={isPerson || !data.roles.length}>{isPerson ? '' : data.roles.slice(0,4).join(' / ')}</p>
           {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?${listLink}#contributor-works`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
         </header>

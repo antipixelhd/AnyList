@@ -17,7 +17,7 @@ from core.catalog_search import category_exclusion, result_filters, matches_resu
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
 from core.credit_roles import work_credit
-from core.contributor_roles import PERSON_ROLES, preferred_role, primary_profession
+from core.contributor_roles import PERSON_ROLES, game_primary_profession, preferred_role, primary_profession
 from core.tracking_editor import attach_editor_context
 from core.studio_groups import studio_root, studio_members, studio_companies, studio_display_name, studio_entity_ids
 from models import Media
@@ -505,6 +505,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             key=f'catalogue:{entity.id}' if entity else key, list_scope=list_scope, status=status,
             page=page, cursor=cursor)
         roles, works, list_count = game_result['roles'], game_result['works'], game_result['list_count']
+        if unified:
+            primary_label = game_primary_profession(roles, kind, attrs.get('known_for_department'))
         if entity and (company_state or imdb_state):
             from core.game_bulk import status as bulk_status
             if kind=='studio':company_state=await bulk_status(db,entity.id,kind,company_state,current=game_result['known_works'])
