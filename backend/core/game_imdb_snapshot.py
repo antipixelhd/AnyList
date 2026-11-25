@@ -1,7 +1,9 @@
 """Fresh, positive-only game evidence from the IMDb principal-credit dataset."""
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import Text, cast, func, select
+from sqlalchemy.dialects.postgresql import JSONPATH
+from sqlalchemy.orm import aliased
 
 from core.catalogue_providers import ProviderError
 from models.game_mapping import GameMappingGeneration
@@ -62,6 +64,31 @@ def fresh_principal_generation():
 async def principals_available(sessions):
     async with sessions() as db:
         return bool(await db.scalar(fresh_principal_generation()))
+
+
+async def person_game_roles(db, native):
+    """Check the exact person's indexed principals on playable, mapped games."""
+    from core.game_credit_roles import SOURCE_ACTING, source_role
+    from core.game_imdb_bindings import verified_bindings
+    from core.game_types import INDEPENDENT
+    from models.catalogue import CatalogueEntity
+    from models.game_mapping import GameMappingReference
+
+    person = aliased(GameMappingReference)
+    titles = select(func.jsonb_array_elements_text(person.data['value']['game_ids'])).where(
+        person.native == native, person.generation.in_(fresh_principal_generation())).limit(100)
+    games = verified_bindings(titles).subquery()
+    principals = func.jsonb_path_query_array(GameMappingReference.data['value']['principals'],
+        cast('$[*] ? (@.name.id == $person)', JSONPATH), func.jsonb_build_object('person', cast(native, Text)))
+    rows = await db.scalars(select(principals).join(games, games.c.imdb_id == GameMappingReference.native)
+        .join(CatalogueEntity, CatalogueEntity.id == games.c.work_id).where(
+            GameMappingReference.generation.in_(fresh_principal_generation()),
+            CatalogueEntity.attributes['game_class'].astext.in_(INDEPENDENT - {'port'}),
+            CatalogueEntity.attributes['adult'].astext.is_distinct_from('true'),
+            CatalogueEntity.attributes['mobile_only'].astext.is_distinct_from('true')))
+    return {'actor' if role in SOURCE_ACTING else 'staff'
+        for credits in rows for credit in credits or []
+        if (role := source_role(credit)) and role != 'thanks'}
 
 
 async def people_samples(sessions, term):

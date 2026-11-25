@@ -133,6 +133,55 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
             job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==JOB))
             self.assertTrue(job.payload['projection_only'])
 
+    async def test_missing_tmdb_link_is_checked_while_imdb_credits_are_in_backoff(self):
+        from core.game_person_identity import JOB as IDENTITY_JOB, GamePersonIdentity
+        from models.game_mapping import GameMappingGeneration, GameMappingReference
+        entity=await self.person(tmdb=False)
+        self.app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
+        async with self.Session() as db:
+            conn=await db.connection()
+            await conn.run_sync(GameMappingGeneration.__table__.create,checkfirst=True)
+            await conn.run_sync(GameMappingReference.__table__.create,checkfirst=True)
+            db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id='nm777',entity_id=entity,
+                next_attempt_at=now()+timedelta(minutes=15),error_code='forbidden'))
+            game=CatalogueEntity(kind='game',name='Mapped snapshot game',attributes={'game_class':'game'})
+            db.add_all([game, GameMappingGeneration(id='local-imdb',source='imdb',active=True,
+                observed_at=now(),coverage={'principal_credits':True})])
+            await db.flush()
+            db.add_all([
+                CatalogueIdentity(entity_id=game.id,namespace='igdb.game',external_id='99',source='igdb'),
+                CatalogueIdentity(entity_id=game.id,namespace='imdb.title',external_id='tt99',source='reviewed',
+                    evidence={'title_type':'videoGame','igdb_id':'99'}),
+                GameMappingReference(generation='local-imdb',native='nm777',title='Availability person',
+                    data={'value':{'game_ids':['tt99','tt98']}}),
+                GameMappingReference(generation='local-imdb',native='tt99',title='Mapped snapshot game',
+                    data={'value':{'principals':[{'name':{'id':'nm777'},'category':{'id':'writer'}},
+                        {'name':{'id':'nm778'},'category':{'id':'actor'}}]}}),
+                GameMappingReference(generation='local-imdb',native='tt98',title='Unmapped game',
+                    data={'value':{'principals':[{'name':{'id':'nm777'},'category':{'id':'actor'}}]}}),
+            ])
+            await db.commit()
+        response=await self.read(entity,'person')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertTrue(response.json()['pending'])
+        self.assertLess(response.json()['retry_after'],60)
+        self.assertEqual(response.json()['roles']['actor']['game'],'unknown')
+        self.assertEqual(response.json()['roles']['staff']['game'],'available')
+        async with self.Session() as db:
+            jobs={job.kind:job for job in await db.scalars(select(MetadataSnapshot))}
+            self.assertEqual(jobs[JOB].error_code,'forbidden')
+            self.assertEqual(jobs[IDENTITY_JOB].entity_id,entity)
+            self.assertLess(jobs[IDENTITY_JOB].next_attempt_at,jobs[JOB].next_attempt_at)
+        profile={'id':777,'name':'Availability person','imdb_id':'nm777'}
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+             patch('core.tmdb.find_by_external_id',AsyncMock(return_value={'person_results':[{'id':777}]})), \
+             patch('core.tmdb.get_person_profile',AsyncMock(return_value=profile)):
+            self.assertEqual(await GamePersonIdentity(self.Session).run('nm777'),'verified')
+        async with self.Session() as db:
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='tmdb.person'))
+            self.assertEqual(identity.entity_id,entity)
+            self.assertEqual(identity.external_id,'777')
+
     async def test_provider_negative_preserves_other_stored_works_and_dlc_does_not_enable_games(self):
         entity=await self.person();await self.person_cache(entity)
         key,config=movie_job('actor',777)

@@ -140,6 +140,20 @@ async def availability(db,viewer,*,kind,key):
             if admitted:
                 source=await view(db,admitted['id'],state=admitted,include_profile=False,check_mapping=True)
                 game_pending=source['pending'] or source.get('identity_pending',False);coverage=source['mapping'];roles=coverage.get('role_coverage')
+                if kind=='person' and not (source['complete'] and coverage.get('source_complete')) and any(
+                        states[mode]['game']=='unknown' for mode in kinds):
+                    # The live worker can be pending or in backoff. The local
+                    # snapshot supplies positives independently of that state.
+                    from core.game_imdb_snapshot import person_game_roles
+                    for mode in await person_game_roles(db,admitted['id']):
+                        states[mode]['game']='available'
+                if kind=='person' and not native and not coverage.get('source_complete'):
+                    # Movies & Series can resolve independently of an IMDb
+                    # outage or a cold Games filmography.
+                    from core.game_person_identity import request as request_identity
+                    identity=await request_identity(db,admitted['id'],entity.id,None,enqueue=True)
+                    if identity and identity['pending']:
+                        delays.append(identity['retry_after'])
                 if source['complete'] and not game_pending and coverage.get('source_complete'):
                     if roles is None:
                         game_pending=await queue_projection(db,admitted['id']) or game_pending
@@ -155,4 +169,4 @@ async def availability(db,viewer,*,kind,key):
     await db.commit()
     return {'key':f'catalogue:{entity.id}' if entity else key,
         **({'roles':states} if kind=='person' else {'domains':states[kind]}),
-        'pending':pending or game_pending,'retry_after':min(delays,default=3)}
+        'pending':bool(delays),'retry_after':max(3,min(delays,default=3))}

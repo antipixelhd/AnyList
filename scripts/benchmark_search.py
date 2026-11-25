@@ -227,7 +227,8 @@ async def main(args):
             game_contributor_id=None
             game_company_id=None
             availability_evidence=None
-            if not args.case or any(name.startswith(('game_contributor','game_people','game_person','game_company')) for name in args.case):
+            if not args.case or any(name.startswith(('game_contributor','game_people','game_person','game_company'))
+                                    or name=='person_tab_availability' for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
                 if args.case and any(name in args.case for name in ('game_company_cached','game_company_availability','game_company_search')):
