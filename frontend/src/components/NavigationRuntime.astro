@@ -493,6 +493,12 @@
       }
       prepareDetailResolution(event.newDocument,event.to,currentUser());
       if(event.signal.aborted||returnViewIdentity(event.newDocument.body)!==returnViewIdentity(document.body))return;
+      // Capture server-rendered People pages before their scripts run so a
+      // quick Back action still leaves a reusable, unmodified portfolio.
+      if(event.newDocument.querySelector?.('[data-contributor-page].is-person')){
+        const key=keyFor(event.to);
+        if(!state.pages.has(key)||state.pages.get(key)?.predicted)remember(event.to,event.newDocument);
+      }
       const source=event.navigationType==='traverse'?event.from:new URL(location.href);
       const capture:CaptureReturnView={source,save(url,apply){
         try{
@@ -534,7 +540,7 @@
       const url = new URL(location.href);
       const key = keyFor(url);
       if (state.usedCached.has(key)) void validate(url, key);
-      else remember(url, document);
+      else if(!personPagePath(url.pathname)||!state.pages.has(key))remember(url, document);
     });
     window.addEventListener('pagehide', closeNavigationDialogs);
     window.addEventListener('pageshow', event => {
