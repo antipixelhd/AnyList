@@ -279,8 +279,8 @@
         hours:row?.querySelector('[data-game-list-hours]')?.textContent?.trim().replace(/^—$/,'')||null,
         achievement:row?.querySelector('[data-game-list-achievements][data-known="true"]')?.textContent?.trim()||null,
       }:undefined;
-      if(title)detailHints.set(url,{kind:destination.kind==='person'?'person':['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
-        poster:known?.poster||image?.currentSrc||image?.getAttribute('src')||image?.dataset.deferredSrc,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
+      if(title)detailHints.set(url,{kind:['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
+        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
         heading:{year:known?.year||row?.dataset.detailYear||row?.querySelector('[data-year]')?.textContent?.trim(),
           genres:known?.genres,originalTitle:known?.original_title,tagline:known?.tagline,creators:known?.detail_creators,
           primaryPending:kind==='game'?known?.game_metadata_status?.primary_ready===false:known?.primary_status?.pending}});
@@ -451,7 +451,7 @@
       }
       const resolving=host?.querySelector<HTMLElement>('[data-loading-destination]')?.dataset.loadingDestination===event.to.href;
       if(destination&&host&&!resolving&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
-        &&document.querySelector(destination.kind==='person'?'[data-person-loading-template]':'[data-detail-loading-template]')){
+        &&document.querySelector('[data-detail-loading-template]')){
         clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
       }
       if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){

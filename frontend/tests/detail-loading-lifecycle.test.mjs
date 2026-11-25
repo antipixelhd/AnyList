@@ -38,17 +38,6 @@ test('an already cancelled route cannot hide the current page',t=>{
   assert.equal(f.host.preview,undefined);assert.equal(f.host.inert,false);assert.equal(f.doc.documentElement.style.overflow,'auto');
 });
 
-test('cold People navigation preserves the clicked name and cleans up its loading frame',t=>{
-  const f=fixture(t),controller=new AbortController();
-  const clear=mountRoutePreview(f.host,{kind:'person',title:'Contributor'},new URL('https://local.test/actors/catalogue:2?media_type=game'),controller.signal);
-  assert.equal(f.nodes.get('title').textContent,'Contributor');
-  assert.equal(f.nodes.get('title').hidden,false);
-  assert.equal(f.host.inert,true);
-  clear();
-  assert.equal(f.host.inert,false);
-  assert.equal(f.frame.removed,true);
-});
-
 test('Browse and profile snapshots are captured after the detail preview is cleared',t=>{
   const f=fixture(t),controller=new AbortController();
   const runtime=readFileSync(new URL('../src/components/NavigationRuntime.astro',import.meta.url),'utf8');

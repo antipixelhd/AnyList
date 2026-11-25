@@ -1,11 +1,9 @@
 import {responsiveArtwork} from './responsive-artwork.ts';
 import {detailHeroArtwork} from './detail-artwork.ts';
-import {personPagePath} from './game-public-routes.ts';
 
 type HeadingHint={year?:string;originalTitle?:string|null;tagline?:string|null;genres?:string[];creators?:string[];primaryPending?:boolean};
-export type DetailHint={kind:'movie'|'series'|'game'|'person'|'unknown';title?:string;poster?:string|null;backdrop?:string|null;heading?:HeadingHint;library?:boolean;progress?:{hours:string|null;achievement:string|null}};
+export type DetailHint={kind:'movie'|'series'|'game'|'unknown';title?:string;poster?:string|null;backdrop?:string|null;heading?:HeadingHint;library?:boolean;progress?:{hours:string|null;achievement:string|null}};
 export function detailDestination(url:URL){
-  if(personPagePath(url.pathname))return {key:url.pathname,kind:'person'} as const;
   const match=url.pathname.match(/^\/(title|games)\/([1-9]\d*)\/?$/);
   if(match&&Number.isSafeInteger(Number(match[2])))return {key:`${match[1]}:${match[2]}`,kind:match[1]==='games'?'game':'unknown'} as const;
   const id=url.searchParams.get('id');if(!id||!/^\d+$/.test(id)||!Number.isSafeInteger(Number(id))||Number(id)<=0)return;
@@ -53,7 +51,7 @@ export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
   root.dataset.loadingLibrary=String(!!hint.library);
   const title=root.querySelector<HTMLElement>('[data-loading-title]')!;
   if(hint.title)title.textContent=hint.title;
-  root.querySelector<HTMLElement>('[data-loading-kind-label]')!.textContent=({movie:'Movie',series:'Series',game:'Game',person:'',unknown:''})[hint.kind];
+  root.querySelector<HTMLElement>('[data-loading-kind-label]')!.textContent=({movie:'Movie',series:'Series',game:'Game',unknown:''})[hint.kind];
   root.querySelector<HTMLElement>('[data-loading-series]')!.hidden=hint.kind!=='series';
   root.querySelector<HTMLElement>('[data-loading-secondary-label]')!.textContent=hint.kind==='game'?'Play time':'Cast & crew';
   const heading=hint.heading;
@@ -86,17 +84,7 @@ export function detailLoadingFrame(hint:DetailHint,doc:Document=document){
 /** A content-only preview preserves the outgoing document's geometry/history. */
 export function mountRoutePreview(host:HTMLElement,hint:DetailHint,url:URL,signal:AbortSignal){
   if(signal.aborted)return ()=>{};
-  const template=hint.kind==='person'?document.querySelector<HTMLTemplateElement>('[data-person-loading-template]'):null;
-  if(hint.kind==='person'&&!template?.content.firstElementChild)return ()=>{};
-  const root=template?template.content.firstElementChild!.cloneNode(true) as HTMLElement:detailLoadingFrame(hint);
-  if(hint.kind==='person'){
-    const title=root.querySelector<HTMLElement>('[data-loading-title]')!;
-    if(hint.title){title.textContent=hint.title;title.hidden=false;}
-    const portrait=root.querySelector<HTMLImageElement>('[data-loading-poster]')!;
-    const src=safeImage(hint.poster);
-    if(src){portrait.onload=()=>portrait.hidden=false;portrait.src=src;portrait.hidden=!portrait.complete||!portrait.naturalWidth;}
-  }
-  root.classList.add('route-detail-preview');
+  const root=detailLoadingFrame(hint);root.classList.add('route-detail-preview');
   const visibility=host.style.visibility,inert=host.inert;
   const overflow=document.documentElement.style.overflow;
   document.documentElement.style.overflow='hidden';
