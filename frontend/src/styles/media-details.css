@@ -101,7 +101,8 @@
 .media-detail .lab-friend>div { flex:1; }
 .media-detail :is(.lab-friends-actions,.lab-friends-average) { display:flex; align-items:center; gap:5px; }
 .media-detail .lab-friends-heading { color:inherit; }
-.media-detail .lab-friends-heading:is(:hover,:focus-visible) { outline:none; color:var(--blue); text-decoration:underline; }
+.media-detail .lab-friends-heading:is(:hover,:focus-visible) { color:var(--blue); }
+.media-detail .lab-friends-heading:focus-visible { outline:none; text-decoration:underline; }
 .media-detail .lab-friends-actions .mobile-screen-disclosure:focus-visible { outline:none; color:var(--blue); }
 .media-detail .media-social-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:34px; align-items:start; }
 .media-detail .media-social-grid>section { min-width:0; }
