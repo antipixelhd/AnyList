@@ -70,13 +70,13 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
           <ul id="appbar-browse-categories" class="appbar-browse-categories">
             {browseNavigationItems.map(({tab,label,icon}) => (
               <li class="appbar-browse-category" hidden={!browseNavigationEnabled(tab,domains)}>
-                <Icon name={icon} fixedWidth/>
-                <div>
-                  <a class="appbar-browse-category-link" href={cleanBrowseHref(tab)} data-browse-category={tab} aria-current={browseCategory===tab?'page':undefined}>{label}</a>
-                  <ul class="appbar-browse-shortcuts" aria-label={label}>
-                    {browseNavigationShortcuts.map(({key,label}) => <li><a href={browseShortcutHref(tab,key)}>{label}</a></li>)}
-                  </ul>
-                </div>
+                <a class="appbar-browse-category-link" href={cleanBrowseHref(tab)} data-browse-category={tab} aria-current={browseCategory===tab?'page':undefined}>
+                  <Icon name={icon} fixedWidth/>
+                  <span>{label}</span>
+                </a>
+                <ul class="appbar-browse-shortcuts" aria-label={label}>
+                  {browseNavigationShortcuts.map(({key,label}) => <li><a href={browseShortcutHref(tab,key)}>{label}</a></li>)}
+                </ul>
               </li>
             ))}
           </ul>
@@ -140,6 +140,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
   import {mountBrowseNavigation,syncBrowseNavigation} from '../lib/browse-navigation';
   let appbarListeners: AbortController;
+  let browseNavigation: {nav: HTMLElement; lifetime: AbortController; close: ReturnType<typeof mountBrowseNavigation>} | undefined;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
   document.addEventListener('astro:page-load', () => {
@@ -147,7 +148,16 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   appbarListeners = new AbortController();
   const appbar = document.querySelector<HTMLElement>('[data-appbar]');
   const desktopNav = appbar?.querySelector<HTMLElement>('[data-desktop-main-nav]');
-  const closeBrowse = desktopNav && mountBrowseNavigation(desktopNav, appbarListeners.signal);
+  // The navigation survives swaps. Keep its menu and listeners with that node.
+  if (desktopNav !== browseNavigation?.nav) {
+    browseNavigation?.lifetime.abort();
+    browseNavigation = undefined;
+    if (desktopNav) {
+      const lifetime = new AbortController();
+      browseNavigation = {nav:desktopNav, lifetime, close:mountBrowseNavigation(desktopNav, lifetime.signal)};
+    }
+  }
+  const closeBrowse = browseNavigation?.close;
   const syncBrowse = () => {
     if (desktopNav) syncBrowseNavigation(desktopNav, mediaDomains(JSON.parse(desktopNav.dataset.mediaDomains || '{}')));
   };
@@ -309,7 +319,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
         requestAnimationFrame(update);
       }
     }, { passive: true, signal: appbarListeners.signal });
-    appbar.addEventListener('focusin', reveal);
+    appbar.addEventListener('focusin', reveal, { signal: appbarListeners.signal });
     window.addEventListener('pageshow', () => {
       syncBrowse();
       previousY = pageY();

@@ -69,9 +69,10 @@ export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, ur
 
 export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
   const group = nav.querySelector<HTMLElement>('[data-appbar-browse]');
+  const home = group?.querySelector<HTMLAnchorElement>('[data-browse-home]');
   const toggle = group?.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
   const menu = group?.querySelector<HTMLElement>('[data-browse-menu]');
-  if (!group || !toggle || !menu) return;
+  if (!group || !home || !toggle || !menu) return;
 
   const hover = matchMedia('(any-hover: hover)');
   let pinned = false;
@@ -85,13 +86,21 @@ export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
     toggle.setAttribute('aria-expanded', 'true');
     menu.inert = false;
   };
+  const pin = () => {
+    if (toggle.hidden) return;
+    pinned = true;
+    open();
+  };
   group.addEventListener('pointerenter', event => { if (hover.matches && event.pointerType !== 'touch') open(); }, {signal});
   group.addEventListener('pointerleave', event => {
     if (event.pointerType !== 'touch' && !pinned && !menu.contains(document.activeElement)) close();
   }, {signal});
   toggle.addEventListener('click', () => {
     if (pinned) close();
-    else { pinned = true; open(); }
+    else pin();
+  }, {signal});
+  home.addEventListener('click', event => {
+    if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) pin();
   }, {signal});
   group.addEventListener('focusout', event => {
     if (event.relatedTarget instanceof Node && !group.contains(event.relatedTarget)) close();
@@ -103,7 +112,6 @@ export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
     if (menu.contains(document.activeElement)) toggle.focus({preventScroll:true});
     close();
   }, {signal});
-  document.addEventListener('astro:before-swap', close, {signal});
   signal.addEventListener('abort', close, {once:true});
   return close;
 }
