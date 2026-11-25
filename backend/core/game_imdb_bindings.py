@@ -209,6 +209,18 @@ class GameIMDbBindings:
             'mapping_fetched_at':cached['fetched_at'],'identity_fetched_at':cached_header.get('fetched_at'),
             'imdb_identity':header},expected_igdb=native)
 
+    async def observe_title(self, title_id, reference=None):
+        observed_at = None
+
+        async def live(native):
+            nonlocal observed_at
+            header = await self.source.title(native)
+            observed_at = now().isoformat()
+            return header
+
+        header = await title_with_fallback(self.sessions, live, title_id, reference)
+        return header, observed_at
+
     async def reverse_lookup(self,work_id,native,previous):
         from core.game_mapping_index import lookup,wikidata_generation
         from core.game_title_candidates import FIELDS,retrieve
@@ -241,7 +253,7 @@ class GameIMDbBindings:
         for mapping in previous.get('mappings',[]):
             claims={snak_value(row.get('mainsnak')) for row in mapping.get('evidence',{}).get('P345',[])}-{None}
             if claims and claims!={title_id}:return previous
-        current=await title_with_fallback(self.sessions,self.source.title,title_id,title)
+        current,observed_at=await self.observe_title(title_id,title)
         current_title={**title['value'],'id':title_id,'title':current['titleText']['text'],'year':(current.get('releaseYear') or {}).get('year')}
         candidate=await retrieve(self.wiki.sources,current_title)
         proof=decide(current_title,candidate['data']['rows'],complete=candidate['data']['complete'] and not candidate['stale'],branches=candidate['data']['branches'])
@@ -285,11 +297,12 @@ class GameIMDbBindings:
             *[f'wikidata:{mapping["evidence"]["wikidata_id"]}' for mapping in previous.get('mappings',[])
                 if mapping.get('evidence',{}).get('wikidata_id')]])
         return await self.save(work_id,title_id,'matched',{'title_type':'videoGame','igdb_id':native,
-            'matching':proof['evidence'],'imdb_identity':current},expected_igdb=native,participation=True)
+            'matching':proof['evidence'],'imdb_identity':current,'identity_fetched_at':observed_at},
+            expected_igdb=native,participation=True)
 
     async def revalidate(self,work_id,native,previous):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
-        header=await title_with_fallback(self.sessions,self.source.title,previous['id'])
+        header,observed_at=await self.observe_title(previous['id'])
         title={'id':previous['id'],'title':header['titleText']['text'],'year':(header.get('releaseYear') or {}).get('year')}
         result=await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).page([previous['id']],titles={previous['id']:title})
         outcome=result['outcomes'][0]
@@ -299,7 +312,7 @@ class GameIMDbBindings:
                 return await self.reverse_lookup(work_id,native,{'status':'unmapped'})
             return await self.save(work_id,previous['id'],'matched' if matched else 'wikidata',{
                 'title_type':'videoGame','igdb_id':native,'matching' if matched else 'wikidata':outcome['evidence'],
-                'imdb_identity':header},expected_igdb=native,participation=True)
+                'imdb_identity':header,'identity_fetched_at':observed_at},expected_igdb=native,participation=True)
         if not result.get('stale') and outcome['status'] in ('verified','conflict','excluded'):
             async with self.sessions() as db:
                 await catalogue.write_lock(db)
@@ -379,6 +392,9 @@ class GameIMDbBindings:
                 await db.flush()
                 old=None
             if old:
+                observed_at = (old.evidence or {}).get('identity_fetched_at')
+                if observed_at and observed_at > (evidence.get('identity_fetched_at') or ''):
+                    evidence = {**evidence, 'identity_fetched_at': observed_at}
                 if source=='reviewed':
                     old.source=source
                     old.evidence=evidence

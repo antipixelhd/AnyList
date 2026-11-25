@@ -21,7 +21,8 @@ from db import get_db
 from dependencies import get_current_user
 from models import Media, User, WatchEvent
 from models.base import MediaType
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueRelationship, MetadataSnapshot
+from models.game_mapping import GameMappingGeneration, GameMappingReference
 from models.statistics import StatsMetadataRevision, UserStatsState
 from models.sync import SyncJob, SyncStatus
 from models.tracking import TrackedEntry
@@ -86,6 +87,9 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         # Reuse the neighbouring migration-backed fixture, without inheriting tests.
         await statistics_fixture.StatisticsDatabaseTests.asyncSetUp(self)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(GameMappingGeneration.__table__.create)
+            await conn.run_sync(GameMappingReference.__table__.create)
         await self.client.aclose()
         app = FastAPI()
         app.include_router(router)
@@ -134,6 +138,51 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.sum(StatsMetadataRevision.revision))), revision)
             self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)), 1)
+
+    async def test_game_imdb_coverage_counts_canonical_pages_and_separates_sources(self):
+        async with self.Session() as db:
+            titles = [CatalogueEntity(kind='game', name=name, attributes={'game_class': kind, **attrs})
+                for name, kind, attrs in (
+                    ('Both sources', 'game', {}), ('Live only', 'game', {}), ('Local only', 'game', {}),
+                    ('Unconfirmed', 'game', {}), ('Expansion page', 'expansion', {}),
+                    ('Port redirect', 'port', {}), ('Bundle redirect', 'bundle', {}),
+                    ('Edition redirect', 'expanded_game', {}), ('Mobile title', 'game', {'mobile_only': True}),
+                    ('Unclassified', 'unknown', {}))]
+            db.add_all(titles)
+            await db.flush()
+            both, live, local, unknown, expansion, _, bundle, edition, _, _ = titles
+            edition.attributes = {**edition.attributes, 'game_bundle_alias': {'work_id': both.id}}
+            db.add(CatalogueRelationship(source_id=bundle.id, target_id=both.id, relation='version', provider='igdb',
+                attributes={'edition_type': 'release_bundle', 'source_active': True}))
+            for game in titles:
+                db.add(CatalogueIdentity(entity_id=game.id, namespace='igdb.game', external_id=str(game.id), source='igdb'))
+            for game in (both, live, local, unknown):
+                db.add(CatalogueIdentity(entity_id=game.id, namespace='imdb.title', external_id=f'tt{game.id}',
+                    source='reviewed', evidence={'igdb_id': str(game.id), 'title_type': 'videoGame'}))
+            stamp = snapshots.utcnow()
+            db.add_all([
+                GameMappingGeneration(id='active', source='imdb', active=True, observed_at=stamp, coverage={'complete': True}),
+                GameMappingGeneration(id='old', source='imdb', active=False, observed_at=stamp, coverage={'complete': True}),
+                MetadataSnapshot(provider='imdb', kind='game_credits', external_id=f'tt{both.id}',
+                    entity_id=both.id, fetched_at=stamp),
+                MetadataSnapshot(provider='imdb', kind='game_imdb_identity', external_id=f'v1:tt{live.id}', fetched_at=stamp),
+                MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(local.id),
+                    entity_id=local.id, error_code='forbidden'),
+            ])
+            await db.flush()
+            for game, generation in ((both, 'active'), (local, 'active'), (live, 'old')):
+                db.add(GameMappingReference(generation=generation, native=f'tt{game.id}', title=game.name))
+            await db.commit()
+
+        response = await self.client.get('/admin/data-health')
+        self.assertEqual(response.status_code, 200, response.text)
+        checks = {row['code']: row for row in response.json()['checks']}
+        for suffix, expected in (('both', [both]), ('live', [live]), ('local', [local]),
+                                 ('unverified', [unknown, expansion])):
+            check = checks[f'imdb_game_{suffix}']
+            self.assertEqual(check['count'], len(expected))
+            self.assertEqual([row['href'] for row in check['examples']], [f'/games/{game.id}' for game in expected])
+        self.assertIn('Latest live credits refresh failed', checks['imdb_game_local']['examples'][0]['detail'])
 
     async def test_all_routes_require_admin_and_reject_unknown_operations(self):
         for path in ('/admin/data-health','/admin/data-health/job'):

@@ -17,6 +17,7 @@ from db import get_db
 from dependencies import get_current_user
 from models import GameEntry, SteamConnection, SyncJob, SyncStatus
 from models.catalogue import CatalogueEntity, CatalogueIdentity
+from models.game_mapping import GameMappingGeneration, GameMappingReference
 from routers.admin_data_health import router
 
 
@@ -31,6 +32,9 @@ class GameHealthTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.GameBridgeTests.asyncSetUp(self)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(GameMappingGeneration.__table__.create)
+            await conn.run_sync(GameMappingReference.__table__.create)
         self.source = SimpleNamespace(steam_games=AsyncMock(return_value=[reference()]))
         self.viewer = self.user
         self.viewer.is_admin = True

@@ -3,6 +3,7 @@ from datetime import timedelta, timezone
 
 from sqlalchemy import select, text
 
+from core import game_imdb_coverage
 from core.statistics_snapshots import CONTRACT_VERSION, utcnow
 from models.sync import SyncJob, SyncStatus
 from core.game_health import ORPHANS
@@ -154,7 +155,8 @@ async def report(db):
                        'unit': unit, 'action': action, 'count': row.get('total', 0), 'examples': examples})
     totals = (await db.execute(text("SELECT (SELECT count(DISTINCT t.media_id) FROM tracked_entries t JOIN media m ON m.id=t.media_id WHERE m.media_type::text IN ('movie','series')) AS tracked, (SELECT count(*) FROM catalogue_entities) AS catalogue"))).one()
     return {'checked_at': utcnow().replace(tzinfo=timezone.utc), 'tracked_titles': totals.tracked,
-            'catalogue_records': totals.catalogue, 'checks': checks, 'job': job_view(await latest_job(db))}
+            'catalogue_records': totals.catalogue, 'checks': [*checks, *await game_imdb_coverage.checks(db)],
+            'job': job_view(await latest_job(db))}
 
 
 async def enqueue(db, user_id, action, *, scan_job_id=None, after_id=0):

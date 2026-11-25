@@ -408,6 +408,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         service=GameIMDbBindings(self.Session,source=source,wiki=wiki)
         result=await service.reverse_lookup(self.base,'10',{'status':'unmapped'})
         self.assertEqual((result['status'],result['binding']['source']),('bound','matched'))
+        self.assertIsNotNone(result['binding']['evidence']['identity_fetched_at'])
         source.title.assert_awaited_once_with('tt1')
 
     async def test_reverse_lookup_rejects_competing_igdb_namesake(self):
@@ -436,6 +437,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         service = GameIMDbBindings(self.Session, source=source, wiki=wiki)
         result = await service.reverse_lookup(self.base, '10', {'status': 'unmapped'})
         self.assertEqual((result['status'], result['binding']['id']), ('bound', 'tt1'))
+        self.assertIsNone(result['binding']['evidence']['identity_fetched_at'])
         source.title.assert_awaited_once_with('tt1')
 
     async def test_partial_wikidata_index_cannot_hide_an_unindexed_competitor(self):
