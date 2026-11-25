@@ -813,11 +813,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     void load();
   } else if (!restored && !displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
-  if (
-    field("start").value ||
-    field("end").value
-  )
-    find<HTMLDetailsElement>(".browse-more").open = true;
   signal.addEventListener(
     "abort",
     () => {

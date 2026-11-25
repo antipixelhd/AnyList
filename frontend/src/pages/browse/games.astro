@@ -70,7 +70,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
             <option value="upcoming" selected={status==='upcoming'}>Upcoming</option>
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(values.get('platforms')||values.get('start')||values.get('end')||minScore)}>
+        <details class="browse-more" data-motion-details>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters"><Icon name="sliders"/></summary>
           <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
             <BrowseGamePlatforms groups={facets.platform_groups} value={values.get('platforms')||''}/>

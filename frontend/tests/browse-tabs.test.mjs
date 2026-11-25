@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {browseTab,browseTabHref,createBrowseTabContext,createBrowseTabs,setBrowsePanelUrl} from '../src/lib/browse-tabs.ts';
-import {browseHomeHref} from '../src/lib/browse-navigation.ts';
+import {browseHomeHref,browseShortcutHref} from '../src/lib/browse-navigation.ts';
+import {browseRequestParams} from '../src/lib/browse-view.ts';
+import {gameBrowseRequest,gameBrowseValues} from '../src/lib/game-browse-data.ts';
 import {mediaDomains} from '../src/lib/media-domains.ts';
 
 test('topbar Browse opens the remembered category without carrying a layout or filters',()=>{
@@ -11,6 +13,29 @@ test('topbar Browse opens the remembered category without carrying a layout or f
   assert.equal(browseHomeHref('game',domains),'/browse/games');
   assert.equal(browseHomeHref('game',{...domains,can_access_games:false}),'/browse');
   assert.equal(browseHomeHref('series',{...domains,show_movies_series:false}),'/browse/games');
+});
+
+test('Browse shortcuts open the selected category with the existing ranking and timeline requests',()=>{
+  for (const tab of ['movie','series','game']) {
+    for (const shortcut of ['trending','newest','upcoming']) {
+      const url = new URL(browseShortcutHref(tab,shortcut),'https://example.test');
+      assert.equal(browseTab(url),tab);
+      assert.equal(url.searchParams.get('view'),shortcut === 'trending' ? null : 'timeline');
+      const today = '2026-11-25';
+      if (tab === 'game') {
+        const values = gameBrowseValues(url.searchParams);
+        const request = new URL(gameBrowseRequest(values,24,null,today),'https://example.test').searchParams;
+        assert.equal(request.get('category'),shortcut === 'upcoming' ? 'newest' : shortcut);
+        assert.equal(request.get('status'),shortcut === 'upcoming' ? 'upcoming' : null);
+        assert.equal(request.get('timeline'),shortcut === 'trending' ? null : 'true');
+      } else {
+        const request = browseRequestParams(url.searchParams,today);
+        assert.equal(request.get('sort'),shortcut);
+        assert.equal(request.get('end'),shortcut === 'newest' ? today : null);
+        assert.equal(request.get('timeline'),shortcut === 'trending' ? null : 'true');
+      }
+    }
+  }
 });
 
 test('cold and retained tabs share live search and layout with compatible screen filters',()=>{

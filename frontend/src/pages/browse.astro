@@ -227,7 +227,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             ))}
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minScore !== 0)}>
+        <details class="browse-more" data-motion-details>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
             <Icon name="sliders" />
           </summary>

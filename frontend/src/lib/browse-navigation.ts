@@ -4,8 +4,26 @@ import type {MediaDomains} from './media-domains.ts';
 const sessionKey = 'anylist.browse.category';
 
 export const browseNavigationItems = [
-  {tab:'movie', label:'Movies'}, {tab:'series', label:'Series'}, {tab:'game', label:'Games'},
+  {tab:'movie', label:'Movies', icon:'film'},
+  {tab:'series', label:'Series', icon:'tv'},
+  {tab:'game', label:'Games', icon:'gamepad'},
 ] as const;
+
+export const browseNavigationShortcuts = [
+  {key:'trending', label:'Trending'},
+  {key:'newest', label:'New releases'},
+  {key:'upcoming', label:'Upcoming'},
+] as const;
+
+export function browseShortcutHref(tab: BrowseTab, shortcut: (typeof browseNavigationShortcuts)[number]['key']) {
+  const values = new URLSearchParams({sort: shortcut});
+  if (shortcut !== 'trending') values.set('view', 'timeline');
+  if (shortcut === 'upcoming') {
+    values.set('status', 'upcoming');
+    if (tab === 'game') values.set('sort', 'newest');
+  }
+  return browseTabHref(tab, values);
+}
 
 export function browseNavigationEnabled(tab: BrowseTab, domains: MediaDomains) {
   return tab === 'game' ? domains.show_games && domains.can_access_games !== false : domains.show_movies_series;
@@ -46,7 +64,7 @@ export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, ur
     else link.removeAttribute('aria-current');
   });
   const toggle = nav.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
-  if (toggle) toggle.hidden = visibleChoices < 2;
+  if (toggle) toggle.hidden = visibleChoices === 0;
 }
 
 export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {

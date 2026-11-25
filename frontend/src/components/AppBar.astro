@@ -9,7 +9,7 @@ import {viewerNotifications} from '../lib/viewer-notifications';
 import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {domainListLinks} from '../lib/media-domains';
-import {browseHomeHref,browseNavigationEnabled,browseNavigationItems,cleanBrowseHref} from '../lib/browse-navigation';
+import {browseHomeHref,browseNavigationEnabled,browseNavigationItems,browseNavigationShortcuts,browseShortcutHref,cleanBrowseHref} from '../lib/browse-navigation';
 import {browseTab} from '../lib/browse-tabs';
 import '../styles/app-bar.css';
 
@@ -65,10 +65,20 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
       <div class="appbar-browse" data-appbar-browse>
         <a href={browseHomeHref(browseCategory??null,domains)} data-browse-home aria-current={browseCategory?'location':undefined}>Browse</a>
-        <button class="appbar-browse-trigger" type="button" data-browse-menu-toggle aria-label="Browse categories" aria-controls="appbar-browse-categories" aria-expanded="false" hidden={browseChoices.length<2}><Icon name="chevron-down"/></button>
+        <button class="appbar-browse-trigger" type="button" data-browse-menu-toggle aria-label="Browse categories" aria-controls="appbar-browse-categories" aria-expanded="false" hidden={!browseChoices.length}><Icon name="chevron-down"/></button>
         <div class="appbar-browse-menu" data-browse-menu inert>
-          <ul id="appbar-browse-categories">
-            {browseNavigationItems.map(({tab,label}) => <li hidden={!browseNavigationEnabled(tab,domains)}><a href={cleanBrowseHref(tab)} data-browse-category={tab} aria-current={browseCategory===tab?'page':undefined}>{label}</a></li>)}
+          <ul id="appbar-browse-categories" class="appbar-browse-categories">
+            {browseNavigationItems.map(({tab,label,icon}) => (
+              <li class="appbar-browse-category" hidden={!browseNavigationEnabled(tab,domains)}>
+                <Icon name={icon} fixedWidth/>
+                <div>
+                  <a class="appbar-browse-category-link" href={cleanBrowseHref(tab)} data-browse-category={tab} aria-current={browseCategory===tab?'page':undefined}>{label}</a>
+                  <ul class="appbar-browse-shortcuts" aria-label={label}>
+                    {browseNavigationShortcuts.map(({key,label}) => <li><a href={browseShortcutHref(tab,key)}>{label}</a></li>)}
+                  </ul>
+                </div>
+              </li>
+            ))}
           </ul>
         </div>
       </div>

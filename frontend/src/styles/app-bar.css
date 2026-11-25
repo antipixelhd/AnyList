@@ -49,17 +49,42 @@ html.appbar-nav-transition-cursor {
   translate:-50% 0;
   transition-delay:0s;
 }
-.appbar-browse-menu ul {
+.appbar-browse-categories,
+.appbar-browse-shortcuts {
   margin:0;
-  padding:5px;
+  padding:0;
   list-style:none;
+}
+.appbar-browse-categories {
+  display:grid;
+  gap:9px;
+  padding:12px 15px;
+  max-inline-size:calc(100vw - 24px);
+  white-space:normal;
   border-radius:8px;
   background:var(--panel);
   box-shadow:0 6px 20px rgb(3 13 24 / 40%);
 }
-.appbar-browse-menu a { display:block; padding:9px 11px; border-radius:5px; }
-.appbar-browse-menu a:is(:hover, :focus-visible, [aria-current=page]) { outline:none; background:var(--field); }
-.appbar-browse-menu a[aria-current=page] { color:var(--blue); }
+.appbar-browse-category:not([hidden]) {
+  display:grid;
+  grid-template-columns:20px minmax(0, 1fr);
+  align-items:start;
+  gap:8px;
+}
+.appbar-browse-category > .ui-icon { margin-block-start:7px; color:var(--muted); }
+.appbar-browse-shortcuts { display:flex; flex-wrap:wrap; gap:0 4px; }
+.appbar-browse-menu a {
+  display:inline-flex;
+  align-items:center;
+  min-block-size:24px;
+  padding-inline:5px;
+  border-radius:4px;
+}
+.appbar-browse-category-link { font-size:14px; }
+.appbar-browse-shortcuts a { color:var(--muted); font-size:12px; }
+.appbar-browse-menu a[aria-current=page],
+.appbar-browse-category:has(> div > a[aria-current=page]) > .ui-icon { color:var(--blue); }
+.appbar-browse-menu a:focus-visible { outline:none; background:var(--field); color:var(--white); }
 
 @media (min-width: 651px) {
   /* Mirror the search control around the centered nav without moving the right controls. */
