@@ -14,7 +14,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
-import {contributorAvailability,disabledContributorOption} from './contributor-availability';
+import {contributorAvailability,contributorRoleState,disabledContributorOption,type ContributorAvailability} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
@@ -73,21 +73,23 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     caption.textContent=[...item.characters,...item.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');
     caption.title=caption.textContent;caption.toggleAttribute('data-character-pending',!!item.characters_pending&&!item.characters.length);
   };
-  let availabilityChanged=(_state:string)=>{};
-  let availabilityController:AbortController|undefined;
-  const refreshAvailability=()=>{
-    if(root.dataset.contributorAvailability!=='true')return;
-    availabilityController?.abort();
-    availabilityController=new AbortController();
-    const mediaInputs=form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]');
-    for(const input of mediaInputs)input.disabled=false;
-    const endpoint=root.dataset.endpoint!.replace('contributors/person/',`contributors/${data.kind}/`);
-    contributorAvailability(endpoint,data.key,AbortSignal.any([signal,availabilityController.signal]),domains=>{
-      for(const input of mediaInputs)input.disabled=disabledContributorOption(input.name,input.value,domains);
-      availabilityChanged(JSON.stringify(domains));
-    });
+  let availability:ContributorAvailability|undefined;
+  const activeDomains=()=>data.kind==='studio'?availability?.domains:availability?.roles?.[data.kind];
+  const selectedMedia=()=>params.get('media_type')||'all';
+  const paintAvailability=()=>{
+    const domains=activeDomains();
+    if(!domains)return;
+    const media=selectedMedia(),games=media==='game',hasWorks=items.size>0;
+    for(const input of form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]')){
+      const hasResult=hasWorks&&(input.name==='domain'?input.value===(games?'game':'movies-series')
+        :!games&&(input.value==='all'||input.value===media));
+      input.disabled=!hasResult&&disabledContributorOption(input.name,input.value,domains);
+    }
+    for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
+      const role=availability?.roles?.[input.value==='staff'?'staff':'actor'];
+      input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&contributorRoleState(role,games)==='empty';
+    }
   };
-  refreshAvailability();
   const paintBanner=mountContributorBanner(root.querySelector<HTMLImageElement>('[data-contributor-banner]')!,signal);
   const updateBanner=()=>paintBanner([...region.querySelectorAll<HTMLElement>('[data-work-key]')]
     .filter(card=>!card.hidden).map(card=>items.get(card)!).filter(Boolean),data.kind==='studio'?data.banner:null);
@@ -364,9 +366,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const submitted=new URLSearchParams();
     new FormData(form).forEach((value,key)=>submitted.set(key,String(value)));
     // A verified-empty selected option can still be opened by direct link.
-    // Disabled controls are absent from FormData; preserve its domain while
+    // Disabled controls are absent from FormData; preserve the selection while
     // the viewer changes another filter, without forcing a route switch.
-    form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
+    form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked,input[name=role]:checked').forEach(input=>submitted.set(input.name,input.value));
     let query=contributorParams(submitted,data.list_count!==null);
     const switching=domain(query)!==domain(params);
     const cached=switching?retained.get(retainedKey(query)):undefined;
@@ -392,7 +394,6 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           // Replace only the works; keep biography, controls, focus and viewport intact.
           region.replaceChildren(...(cached?.nodes||[]));items.clear();
           if(cached)for(const [card,item] of cached.items)items.set(card,item);
-          const roleChanged=next.kind!==data.kind;
           Object.assign(data,next);
           for(const key of [...params.keys()])params.delete(key);
           query.forEach((value,key)=>params.set(key,value));
@@ -405,8 +406,6 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           if(isPerson){
             kicker.textContent=next.primary_label||'';
             kicker.hidden=!next.primary_label;
-            form.querySelector<HTMLElement>('[data-contributor-credit-roles]')!.hidden=!next.role_options?.some(role=>role!==next.kind);
-            if(roleChanged){previousAvailability='';refreshAvailability();}
           }else{
             const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
             roles.textContent=data.roles.slice(0,4).join(' / ');roles.hidden=!data.roles.length;
@@ -417,6 +416,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           if(!cached)append(next.works);
           retainCurrent=true;
           if(cached){restoreFilterControls();root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';paintLayoutControls();}
+          paintAvailability();
           more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
           const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
           notice.textContent=next.notice||'';notice.hidden=!next.notice;
@@ -499,7 +499,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       data.total=next.total;data.list_count=next.list_count;data.known_works=next.known_works;
-      if(isPerson)form.querySelector<HTMLElement>('[data-contributor-credit-roles]')!.hidden=!next.role_options?.some(role=>role!==next.kind);
+      paintAvailability();
       const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
       more.hidden=!data.has_more;updateEmpty();
       animateWorks();
@@ -515,15 +515,21 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     void synchronize();
     pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')!=='game');
   };
-  let previousAvailability='';
-  availabilityChanged=state=>{
-    // Retry an empty active tab when background identity/availability changes.
-    if(previousAvailability&&state!==previousAvailability){
+  if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,next=>{
+    const previousAvailability=availability?.roles||availability?.domains;
+    const previous=activeDomains();
+    availability=next;
+    const current=activeDomains();
+    paintAvailability();
+    if(previousAvailability&&JSON.stringify(previousAvailability)!==JSON.stringify(next.roles||next.domains)){
       pages.clear();invalidateRetained();
-      if(!items.size&&!filterRequest)form.requestSubmit();
+      const media=selectedMedia();
+      const available=(domains:NonNullable<typeof current>)=>media==='all'?contributorRoleState(domains,false)==='available'
+        :domains[media as 'movie'|'series'|'game']==='available';
+      // A verified negative can disable the selected radio without leaving or reloading it.
+      if(previous&&current&&!available(previous)&&available(current)&&!items.size&&!filterRequest)form.requestSubmit();
     }
-    previousAvailability=state;
-  };
+  });
   sourceRefresh.update(data.game_company_status||data.game_person_status);
   bindContributorTabIntent(form,signal,warmSibling);
   bindPredictivePagination(region,signal,()=>!filterRequest&&!syncing&&data.has_more&&!more.disabled&&error.hidden,

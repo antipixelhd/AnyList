@@ -23,7 +23,8 @@ class ContributorImages(BaseModel):
 
 class ContributorAvailability(BaseModel):
     key: str
-    domains: dict[Literal['movie','series','game'],Literal['unknown','available','empty']]
+    domains: dict[Literal['movie','series','game'],Literal['unknown','available','empty']] | None = None
+    roles: dict[PersonCreditRole,dict[Literal['movie','series','game'],Literal['unknown','available','empty']]] | None = None
     pending: bool
     retry_after: int = Field(default=3,ge=1,le=3600)
 

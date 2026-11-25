@@ -14,6 +14,7 @@ from core.game_imdb_enrichment import now
 from core.game_imdb_person import JOB,COMPONENT,VERSION as PERSON_VERSION
 from core.game_credit_roles import CREDIT_POLICY_VERSION
 from core.game_person_identity import VERSION as IDENTITY_VERSION
+from dependencies import get_optional_user_or_api_key
 from models.catalogue import CatalogueEntity,CatalogueIdentity,CatalogueCredit,MetadataSnapshot,ContributorEvidence
 
 
@@ -85,6 +86,33 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         payload_reads=[sql for sql in statements if re.search(
             r'catalogue_(?:metadata_snapshots|contributor_evidence)\.payload\s*(?:AS\s+\w+\s*)?(?:,|FROM\b|$)',sql,re.I)]
         self.assertFalse(payload_reads,'\n'.join(payload_reads))
+
+    async def test_person_read_checks_both_roles_with_one_shared_evidence_job(self):
+        entity=await self.person()
+        self.app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
+        await self.person_cache(entity)
+        key,config=movie_job('person',777)
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                expires_at=now()+timedelta(days=1),payload={'domain_availability':{
+                    'actor':{'movie':'available','series':'empty'}}}))
+            await db.commit()
+        initial=(await self.read(entity,'person')).json()
+        self.assertTrue(initial['pending'])
+        self.assertEqual(initial['roles']['staff'],{'movie':'unknown','series':'unknown','game':'empty'})
+        self.key_mock.return_value='fixture'
+        profile={'id':777,'combined_credits':{'cast':[{'id':1,'title':'Film','media_type':'movie'}],'crew':[]}}
+        with patch('core.tmdb.get_person',AsyncMock(return_value=profile)) as provider:
+            await evidence.run_batch(self.Session)
+            provider.assert_awaited_once()
+        result=(await self.read(entity,'person')).json()
+        self.assertEqual(result['roles'],{
+            'actor':{'movie':'available','series':'empty','game':'empty'},
+            'staff':{'movie':'empty','series':'empty','game':'empty'}})
+        self.assertFalse(result['pending'])
+        self.viewer.games_access=False
+        screen=(await self.read(entity,'person')).json()
+        self.assertEqual(screen['roles']['staff'],{'movie':'empty','series':'empty','game':'unknown'})
 
     async def test_unmapped_or_partial_games_never_disable_and_legacy_cache_reprojects_in_background(self):
         entity=await self.person(tmdb=False);await self.person_cache(entity,unmapped=1)

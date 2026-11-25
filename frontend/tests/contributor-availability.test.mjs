@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {contributorAvailability,disabledContributorOption} from '../src/lib/contributor-availability.ts';
+import {contributorAvailability,contributorRoleState,disabledContributorOption} from '../src/lib/contributor-availability.ts';
 
 test('only verified empty options disable; merged movies/series needs both negatives',()=>{
   for(const movie of ['unknown','available','empty'])for(const series of ['unknown','available','empty']){
@@ -13,6 +13,14 @@ test('only verified empty options disable; merged movies/series needs both negat
   assert.equal(disabledContributorOption('domain','game',{movie:'available',series:'empty',game:'empty'}),true);
 });
 
+test('role choices follow the selected media and require a verified negative',()=>{
+  const staff={movie:'empty',series:'unknown',game:'available'};
+  assert.equal(contributorRoleState(staff,false),'unknown');
+  assert.equal(contributorRoleState(staff,true),'available');
+  assert.equal(contributorRoleState({...staff,series:'empty'},false),'empty');
+  assert.equal(contributorRoleState({...staff,series:'available'},false),'available');
+});
+
 async function fixture(run){
   const previous={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
   const timers=[],calls=[],paints=[],controller=new AbortController();
@@ -20,7 +28,7 @@ async function fixture(run){
   globalThis.setTimeout=(callback,delay)=>{const timer={callback,delay};timers.push(timer);return timer;};
   globalThis.clearTimeout=timer=>{const i=timers.indexOf(timer);if(i>=0)timers.splice(i,1);};
   globalThis.fetch=async(path,options)=>{calls.push({path,options});return Response.json(reply);};
-  const start=(endpoint='contributors/actor/catalogue%3A1')=>contributorAvailability(endpoint,'catalogue:1',controller.signal,value=>paints.push(value));
+  const start=(endpoint='contributors/actor/catalogue%3A1')=>contributorAvailability(endpoint,'catalogue:1',controller.signal,value=>paints.push(value.roles??value.domains));
   const tick=async()=>{timers.shift()?.callback();await new Promise(resolve=>setImmediate(resolve));};
   try{await run({timers,calls,paints,controller,start,tick,reply:value=>reply=value});}
   finally{controller.abort();Object.assign(globalThis,{fetch:previous.fetch,setTimeout:previous.set,clearTimeout:previous.clear});}
@@ -32,6 +40,20 @@ test('deferred compact checks paint choices without replacing works and stop on 
   assert.equal(f.calls[0].options.cache,'no-store');assert.equal(f.timers[0].delay,3000);
   f.reply({key:'catalogue:1',domains:{movie:'available',series:'empty',game:'empty'},pending:false});
   await f.tick();assert.equal(f.paints.at(-1).game,'empty');assert.equal(f.timers.length,0);
+}));
+
+test('one People check keeps polling for unresolved Staff after Acting has settled',()=>fixture(async f=>{
+  f.start('contributors/person/catalogue%3A1');
+  const actor={movie:'available',series:'empty',game:'empty'};
+  const staff={movie:'empty',series:'unknown',game:'available'};
+  f.reply({key:'catalogue:1',roles:{actor,staff},pending:true});
+  await f.tick();
+  assert.deepEqual(f.paints,[{actor,staff}]);
+  assert.equal(f.timers.length,1);
+  f.reply({key:'catalogue:1',roles:{actor,staff:{...staff,series:'empty'}},pending:false});
+  await f.tick();
+  assert.equal(f.paints.at(-1).staff.series,'empty');
+  assert.equal(f.timers.length,0);
 }));
 
 test('stale identities, malformed evidence and traversal paths never disable controls',()=>fixture(async f=>{

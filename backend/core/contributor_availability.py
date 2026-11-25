@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from core import contributor_evidence as evidence
 from core.contributor_details import resolve_contributor, positive_id
 from core.credit_roles import work_credit
-from core.game_access import require
+from core.game_access import allowed, require
 from core.game_contributor_works import game_credits
 from core.statistics_staff import ACTING
 from core.studio_groups import studio_companies, studio_root, studio_members, studio_entity_ids
@@ -46,9 +46,9 @@ def movie_job(kind,native):
     return ('studio',studio_root(native),variant),config
 
 
-async def movie_domains(db,viewer,kind,native):
+async def movie_domains(db,viewer,kind,native,kinds):
     unknown={'movie':'unknown','series':'unknown'}
-    if not native:return unknown,False,3
+    if not native:return {mode:unknown.copy() for mode in kinds},False,3
     key,config=movie_job(kind,native);table=ContributorEvidence;stamp=evidence.now()
     statement=select(table.payload['domain_availability'].label('domains'),table.expires_at,
         table.next_attempt_at,table.lease_until,table.attempts).where(
@@ -56,24 +56,27 @@ async def movie_domains(db,viewer,kind,native):
     row=(await db.execute(statement)).one_or_none()
     fresh=bool(row and row.expires_at and row.expires_at>stamp and not row.attempts
         and not row.next_attempt_at and not (row.lease_until and row.lease_until>stamp))
-    summary=(row.domains or {}).get(kind) if row else None
-    states={media:value if value in ('available','empty') and (fresh or value=='available') else 'unknown'
-        for media,value in (summary or unknown).items() if media in unknown}
-    states={**unknown,**states}
+    summaries=(row.domains or {}) if row else {}
+    states={mode:{**unknown,**{
+        media:value if value in ('available','empty') and (fresh or value=='available') else 'unknown'
+        for media,value in summaries.get(mode,{}).items() if media in unknown
+    }} for mode in kinds}
     pending=bool(row and (row.next_attempt_at or row.lease_until and row.lease_until>stamp))
-    due=not row or not pending and (not row.expires_at or row.expires_at<=stamp or summary is None and not row.attempts)
+    missing=[mode for mode in kinds if mode not in summaries]
+    due=not row or not pending and (not row.expires_at or row.expires_at<=stamp or missing and not row.attempts)
     delay=max(3,int((row.next_attempt_at-stamp).total_seconds())+1) if row and row.next_attempt_at else 3
     if due:pending=True
     if due and await db.scalar(select(func.pg_try_advisory_xact_lock(724052))):
         count=await db.scalar(select(func.count()).select_from(table).where(table.next_attempt_at.is_not(None)))
         if count<evidence.MAX_PENDING:
+            viewer_id=viewer.id if viewer else None
             write=insert(table).values(kind=key[0],native_id=key[1],variant=key[2],config=config,
-                requested_by=viewer.id,next_attempt_at=stamp)
+                requested_by=viewer_id,next_attempt_at=stamp)
             await db.execute(write.on_conflict_do_update(index_elements=['kind','native_id','variant'],
-                set_={'next_attempt_at':stamp,'requested_by':viewer.id},where=table.next_attempt_at.is_(None)
+                set_={'next_attempt_at':stamp,'requested_by':viewer_id},where=table.next_attempt_at.is_(None)
                 & or_(table.lease_until.is_(None),table.lease_until<=stamp)
                 & or_(table.expires_at.is_(None),table.expires_at<=stamp,
-                    table.payload['domain_availability'][kind].is_(None) & (table.attempts==0))))
+                    *(table.payload['domain_availability'][mode].astext.is_(None) & (table.attempts==0) for mode in missing))))
             pending=True;evidence._wake.set()
     return states,pending,min(60,delay)
 
@@ -109,23 +112,28 @@ async def preserve_local_movies(db,states,entity,native,kind):
 
 
 async def availability(db,viewer,*,kind,key):
-    # This response includes Games evidence even on a Movies & Series page.
-    require(viewer)
+    # Legacy role and studio reads remain Games-gated.
+    if kind!='person':require(viewer)
     resolved=await resolve_contributor(db,kind,key,include_identities=True)
     if resolved is None:return None
     entity,native,identities=resolved
-    states,pending,retry=await movie_domains(db,viewer,kind,native)
-    states=await preserve_local_movies(db,states,entity,native,kind)
+    kinds=('actor','staff') if kind=='person' else (kind,)
+    states,pending,retry=await movie_domains(db,viewer,kind,native,kinds)
+    for mode in kinds:
+        states[mode]=await preserve_local_movies(db,states[mode],entity,native,mode)
+        states[mode]['game']='unknown'
     delays=[retry] if pending else []
-    games='unknown';game_pending=False;source=None
-    if entity:
-        exists=bool(await db.scalar(select(select(game_credits(entity.id,kind).c.id).exists())))
-        if exists:games='available'
+    game_pending=False;source=None
+    if entity and allowed(viewer):
+        for mode in kinds:
+            if await db.scalar(select(select(game_credits(entity.id,mode).c.id).exists())):
+                states[mode]['game']='available'
         if kind=='studio':
             from core.game_company_works import status
             source=await status(db,entity.id,enqueue=True)
             game_pending=bool(source and source['pending'])
-            if not exists and source and source['complete'] and source['coverage']=='complete':games='empty'
+            if states[kind]['game']=='unknown' and source and source['complete'] and source['coverage']=='complete':
+                states[kind]['game']='empty'
         else:
             from core.game_imdb_person import request,view,queue_projection
             admitted=await request(db,entity.id)
@@ -138,9 +146,13 @@ async def availability(db,viewer,*,kind,key):
                     # A positive source connection with no displayed work may
                     # still have unresolved game type/parent metadata. Only an
                     # explicit zero for this role certifies absence here.
-                    elif not exists and (role:=roles.get(kind)) and role.get('source')==0 and role.get('unmapped')==0:
-                        games='empty'
+                    else:
+                        for mode in kinds:
+                            role=roles.get(mode)
+                            if states[mode]['game']=='unknown' and role and role.get('source')==0 and role.get('unmapped')==0:
+                                states[mode]['game']='empty'
     if game_pending:delays.append(max(3,min(60,(source or {}).get('retry_after',3))))
     await db.commit()
-    return {'key':f'catalogue:{entity.id}' if entity else key,'domains':{**states,'game':games},
+    return {'key':f'catalogue:{entity.id}' if entity else key,
+        **({'roles':states} if kind=='person' else {'domains':states[kind]}),
         'pending':pending or game_pending,'retry_after':min(delays,default=3)}

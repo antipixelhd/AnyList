@@ -68,12 +68,15 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-filter-switch>div { display:flex; gap:3px; padding:3px; border-radius:7px; background:var(--panel); }
 .contributor-filter-switch label { position:relative; flex:1; min-width:0; cursor:pointer; }
 .contributor-filter-switch input { position:absolute; opacity:0; width:1px; height:1px; margin:0; }
-.contributor-filter-switch label>span { display:flex; align-items:center; justify-content:center; min-height:36px; padding:7px; border-radius:5px; color:var(--muted); font-size:13px; white-space:nowrap; transition:background-color 180ms ease,color 180ms ease; }
+.contributor-filter-switch label>span { display:flex; align-items:center; justify-content:center; min-height:36px; padding:7px; border-radius:5px; color:var(--muted); font-size:13px; white-space:nowrap; transition:background-color 180ms ease,color 180ms ease,opacity 180ms ease; }
 .contributor-filter-switch label:hover>span,.contributor-filter-switch input:focus-visible+span { color:var(--bright); background:var(--surface-raised,var(--bg)); }
 .contributor-filter-switch input:checked+span { color:#ffffff; background:var(--blue); }
 .contributor-filter-switch input:checked:focus-visible+span { background:var(--white); color:var(--bg); }
 .contributor-filter-switch label:has(input:disabled) { cursor:default; }
 .contributor-filter-switch input:disabled+span { color:var(--muted); background:transparent; opacity:.4; }
+@media (prefers-reduced-motion:reduce) {
+  .contributor-filter-switch label>span { transition:none; }
+}
 .contributor-role-switch { flex:0 0 100%; max-width:none; }
 .contributor-role-switch>div { width:fit-content; }
 .contributor-role-switch label>span { padding-inline:12px; }

@@ -36,7 +36,6 @@ try {
   data = await tracker(`${endpoint}?${params}`, Astro.locals.token);
 } catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load this page.'; Astro.response.status = error === 'Not found.' ? 404 : 503; }
 if (isPerson && data && data.kind !== 'studio') params.set('role', data.kind);
-const showRoles = data?.role_options?.some(role => role !== data?.kind);
 const age = data ? personAge(data.birthday, data.deathday) : null;
 const biography = biographyPreview(data?.description);
 const facts = data ? [
@@ -66,7 +65,7 @@ listLink.delete('cursor'); listLink.delete('page'); listLink.delete('source');
 listLink.set('list_scope','in'); listLink.set('view',view);
 ---
 <Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.primary_label || data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner.src].filter(Boolean)} requiresGamesAccess={games}>
-  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint} data-contributor-availability={domains.can_access_games?'true':undefined}>
+  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint} data-contributor-availability={isPerson||domains.can_access_games?'true':undefined}>
     <div class:list={['contributor-banner', {'is-logo':banner.isLogo}]} aria-hidden="true"><img src={banner.src||undefined} hidden={!banner.src} alt="" fetchpriority="high" data-contributor-banner />{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
@@ -94,7 +93,7 @@ listLink.set('list_scope','in'); listLink.set('view',view);
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            {isPerson && <fieldset class="contributor-filter-switch contributor-role-switch" aria-label="Credit role" data-contributor-credit-roles hidden={!showRoles}><div>
+            {isPerson && <fieldset class="contributor-filter-switch contributor-role-switch"><legend class="sr-only">Credit role</legend><div>
               <label><input type="radio" name="role" value="actor" checked={data.kind === 'actor'} /><span>Acting</span></label>
               <label><input type="radio" name="role" value="staff" checked={data.kind === 'staff'} /><span>Staff</span></label>
             </div></fieldset>}
