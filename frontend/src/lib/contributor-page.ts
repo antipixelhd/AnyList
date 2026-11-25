@@ -115,7 +115,6 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   portrait?.addEventListener('error', missingPortrait, {signal});
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
-  root.dataset.enhanced = '';
   const syncDomainFields=()=>{
     const movies = form.querySelector<HTMLFieldSetElement>('[data-contributor-screen-types]')!;
     const games = (form.elements.namedItem('domain') as RadioNodeList).value === 'game';
@@ -538,6 +537,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     void synchronize();
     pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')!=='game');
   };
+  root.dataset.enhanced = '';
   if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,next=>{
     const previousAvailability=availability?.roles||availability?.domains;
     const previous=activeDomains();
