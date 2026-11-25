@@ -146,6 +146,7 @@ function setup(){
       applyContext.get(root)?.(shared.values,shared.moreOpen);
       active=tab;display(root,tab);
       history.replaceState(history.state,'',root.dataset.browseUrl||target(tab));
+      document.dispatchEvent(new Event('anylist:browse-category-visited'));
       loading?.remove();loading=undefined;
       window.scrollTo(0,positions.get(tab)||0);
       posterMotion.get(root)?.replayVisible();

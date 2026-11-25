@@ -23,7 +23,8 @@ export function appMobileNavigation({profile, pathname, signedIn, combineLists,s
       {id: 'games-list', label: 'Games', icon: 'list', href: `${profile}/games`, active: pathname===`${profile}/games`, hidden: !showGames||showMoviesSeries},
       {id: 'split-lists', label: 'Lists', icon: 'list', group: 'lists', active: ['list','movies','series','games'].some(section=>pathname===`${profile}/${section}`), hidden: !showMoviesSeries||combineLists&&!showGames},
     ] : []),
-    {label: 'Browse', icon: 'browse', href: '/browse', active: pathname === '/browse'},
+    {id: 'browse', label: 'Browse', icon: 'browse', href: !showMoviesSeries&&showGames?'/browse/games':'/browse',
+      active: pathname === '/browse'||pathname === '/browse/games'},
     {label: 'Search', icon: 'search', ...(signedIn ? {action: 'search' as const} : {href: '/search'})},
     ...(signedIn ? [
       {label: 'Profile', icon: 'user', href: profile, active: pathname === profile || pathname === `${profile}/`},

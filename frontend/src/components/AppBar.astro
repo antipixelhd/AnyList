@@ -9,6 +9,8 @@ import {viewerNotifications} from '../lib/viewer-notifications';
 import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {domainListLinks} from '../lib/media-domains';
+import {browseHomeHref,browseNavigationEnabled,browseNavigationItems,cleanBrowseHref} from '../lib/browse-navigation';
+import {browseTab} from '../lib/browse-tabs';
 import '../styles/app-bar.css';
 
 const {user, token} = Astro.locals;
@@ -48,8 +50,9 @@ const listItems=user?domainListLinks(profile,domains).map(item=>({...item,active
 const primaryItems = [
   {href: '/home', label: 'Home', icon: 'home', active: active('/home')},
   ...listItems,
-  {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
+const browseCategory = browseTab(Astro.url);
+const browseChoices = browseNavigationItems.filter(({tab}) => browseNavigationEnabled(tab, domains));
 const settingsRoute = pathname.startsWith('/settings/') || ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
 const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists,showGames:domains.show_games,showMoviesSeries:domains.show_movies_series});
 ---
@@ -60,6 +63,15 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     </a>
     <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} data-media-domains={JSON.stringify(domains)} transition:persist="desktop-main-nav">
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
+      <div class="appbar-browse" data-appbar-browse>
+        <a href={browseHomeHref(browseCategory??null,domains)} data-browse-home aria-current={browseCategory?'location':undefined}>Browse</a>
+        <button class="appbar-browse-trigger" type="button" data-browse-menu-toggle aria-label="Browse categories" aria-controls="appbar-browse-categories" aria-expanded="false" hidden={browseChoices.length<2}><Icon name="chevron-down"/></button>
+        <div class="appbar-browse-menu" data-browse-menu inert>
+          <ul id="appbar-browse-categories">
+            {browseNavigationItems.map(({tab,label}) => <li hidden={!browseNavigationEnabled(tab,domains)}><a href={cleanBrowseHref(tab)} data-browse-category={tab} aria-current={browseCategory===tab?'page':undefined}>{label}</a></li>)}
+          </ul>
+        </div>
+      </div>
     </nav>
     <div class="account-nav">
       {user ? <>
@@ -116,6 +128,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   import {pageScrollPosition} from '../lib/page-scroll-position';
   import {carryAppbarAppearance} from '../lib/appbar-appearance';
   import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
+  import {mountBrowseNavigation,syncBrowseNavigation} from '../lib/browse-navigation';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
@@ -123,6 +136,13 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   appbarListeners?.abort();
   appbarListeners = new AbortController();
   const appbar = document.querySelector<HTMLElement>('[data-appbar]');
+  const desktopNav = appbar?.querySelector<HTMLElement>('[data-desktop-main-nav]');
+  const closeBrowse = desktopNav && mountBrowseNavigation(desktopNav, appbarListeners.signal);
+  const syncBrowse = () => {
+    if (desktopNav) syncBrowseNavigation(desktopNav, mediaDomains(JSON.parse(desktopNav.dataset.mediaDomains || '{}')));
+  };
+  syncBrowse();
+  document.addEventListener('anylist:browse-category-visited', syncBrowse, {signal:appbarListeners.signal});
   if (appbar) {
     const pageY=()=>pageScrollPosition(window.scrollY,document.body.style);
     let previousY = pageY();
@@ -149,7 +169,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
       }
     };
     const syncDesktopCurrentPage = () => {
-      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
+      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav > a')) {
         const current = location.pathname === link.pathname || location.pathname.startsWith(`${link.pathname}/`);
         if (current) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
@@ -244,6 +264,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     };
     const hide = () => {
       appbar.classList.add('appbar-hidden');
+      closeBrowse?.();
       clearPointerState();
       clearHoveredLink();
     };
@@ -280,6 +301,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     }, { passive: true, signal: appbarListeners.signal });
     appbar.addEventListener('focusin', reveal);
     window.addEventListener('pageshow', () => {
+      syncBrowse();
       previousY = pageY();
       syncTopFade(previousY);
       if (previousY <= topThreshold() || !document.body.hasAttribute('data-list-landing')) reveal();
@@ -293,7 +315,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
       const preferences=mediaDomains({...JSON.parse(nav.dataset.mediaDomains||'{}'),...change});
       nav.dataset.mediaDomains=JSON.stringify(preferences);
       nav.querySelectorAll<HTMLAnchorElement>(`a[href="${base}/list"], a[href="${base}/movies"], a[href="${base}/series"], a[href="${base}/games"]`).forEach(link => link.remove());
-      const browse = nav.querySelector<HTMLAnchorElement>('a[href="/browse"]');
+      const browse = nav.querySelector('[data-appbar-browse]');
       for (const {href,label} of domainListLinks(base,preferences)) {
         const link = document.createElement('a');
         link.href = href;
@@ -304,6 +326,8 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
         browse?.before(link);
       }
     }
+    closeBrowse?.();
+    syncBrowse();
     const quickSearch = document.querySelector<HTMLElement>('[data-quick-search]');
     if (quickSearch) {
       if(change.combine_lists!=null){quickSearch.dataset.combined = change.combine_lists ? 'yes' : 'no';quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', change.combine_lists);}

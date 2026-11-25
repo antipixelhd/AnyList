@@ -1,0 +1,91 @@
+import {browseTab, browseTabHref, type BrowseTab} from './browse-tabs.ts';
+import type {MediaDomains} from './media-domains.ts';
+
+const sessionKey = 'anylist.browse.category';
+
+export const browseNavigationItems = [
+  {tab:'movie', label:'Movies'}, {tab:'series', label:'Series'}, {tab:'game', label:'Games'},
+] as const;
+
+export function browseNavigationEnabled(tab: BrowseTab, domains: MediaDomains) {
+  return tab === 'game' ? domains.show_games && domains.can_access_games !== false : domains.show_movies_series;
+}
+
+export function cleanBrowseHref(tab: BrowseTab) {
+  return browseTabHref(tab, new URLSearchParams());
+}
+
+export function browseHomeHref(last: string | null, domains: MediaDomains) {
+  const enabled = browseNavigationItems.filter(({tab}) => browseNavigationEnabled(tab, domains));
+  const choice = enabled.find(({tab}) => tab === last) || enabled[0];
+  return choice ? cleanBrowseHref(choice.tab) : '/browse';
+}
+
+export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, url: URL = new URL(location.href)) {
+  const current = browseTab(url);
+  let last: string | null = current ?? null;
+  try {
+    if (current && browseNavigationEnabled(current, domains)) sessionStorage.setItem(sessionKey, current);
+    last = sessionStorage.getItem(sessionKey);
+  } catch { /* Navigation still works when browser storage is disabled. */ }
+
+  const href = browseHomeHref(last, domains);
+  const targets = document.querySelectorAll<HTMLAnchorElement>('[data-browse-home], [data-mobile-item=browse]');
+  targets.forEach(link => {
+    link.href = href;
+    if (current) link.setAttribute('aria-current', link.hasAttribute('data-browse-home') ? 'location' : 'page');
+    else link.removeAttribute('aria-current');
+  });
+  let visibleChoices = 0;
+  nav.querySelectorAll<HTMLAnchorElement>('[data-browse-category]').forEach(link => {
+    const category = link.dataset.browseCategory as BrowseTab;
+    const enabled = browseNavigationEnabled(category, domains);
+    link.closest('li')!.hidden = !enabled;
+    if (enabled) visibleChoices++;
+    if (enabled && category === current) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  const toggle = nav.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
+  if (toggle) toggle.hidden = visibleChoices < 2;
+}
+
+export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
+  const group = nav.querySelector<HTMLElement>('[data-appbar-browse]');
+  const toggle = group?.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
+  const menu = group?.querySelector<HTMLElement>('[data-browse-menu]');
+  if (!group || !toggle || !menu) return;
+
+  const hover = matchMedia('(any-hover: hover)');
+  let pinned = false;
+  const close = () => {
+    pinned = false;
+    toggle.setAttribute('aria-expanded', 'false');
+    menu.inert = true;
+  };
+  const open = () => {
+    if (toggle.hidden) return;
+    toggle.setAttribute('aria-expanded', 'true');
+    menu.inert = false;
+  };
+  group.addEventListener('pointerenter', event => { if (hover.matches && event.pointerType !== 'touch') open(); }, {signal});
+  group.addEventListener('pointerleave', event => {
+    if (event.pointerType !== 'touch' && !pinned && !menu.contains(document.activeElement)) close();
+  }, {signal});
+  toggle.addEventListener('click', () => {
+    if (pinned) close();
+    else { pinned = true; open(); }
+  }, {signal});
+  group.addEventListener('focusout', event => {
+    if (event.relatedTarget instanceof Node && !group.contains(event.relatedTarget)) close();
+  }, {signal});
+  document.addEventListener('pointerdown', event => { if (!group.contains(event.target as Node)) close(); }, {signal});
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || menu.inert) return;
+    event.preventDefault();
+    if (menu.contains(document.activeElement)) toggle.focus({preventScroll:true});
+    close();
+  }, {signal});
+  document.addEventListener('astro:before-swap', close, {signal});
+  signal.addEventListener('abort', close, {once:true});
+  return close;
+}

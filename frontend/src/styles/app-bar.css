@@ -11,6 +11,56 @@ html.appbar-nav-transition-cursor {
   display: inline-grid;
 }
 
+.appbar-browse { position:relative; display:flex; align-items:center; }
+.appbar-browse > a { padding-inline:16px 3px; }
+.appbar-browse:has(> button[hidden]) > a { padding-inline-end:16px; }
+.appbar-browse > a:focus-visible { outline:none; color:var(--blue); }
+.appbar-browse-trigger {
+  display:grid;
+  place-items:center;
+  min-inline-size:26px;
+  min-block-size:32px;
+  padding:0;
+  border:0;
+  background:none;
+  color:inherit;
+  cursor:pointer;
+  font-size:10px;
+}
+.appbar-browse-trigger[hidden] { display:none; }
+.appbar-browse-trigger:is(:hover, :focus-visible, [aria-expanded=true]) { outline:none; color:var(--blue); }
+.appbar-browse-menu {
+  position:absolute;
+  inset-block-start:100%;
+  inset-inline-start:50%;
+  inline-size:max-content;
+  min-inline-size:140px;
+  padding-block-start:7px;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  translate:-50% -4px;
+  transition:opacity 140ms ease, translate 160ms ease, visibility 0s linear 160ms;
+}
+.appbar-browse-trigger[aria-expanded=true] + .appbar-browse-menu {
+  opacity:1;
+  visibility:visible;
+  pointer-events:auto;
+  translate:-50% 0;
+  transition-delay:0s;
+}
+.appbar-browse-menu ul {
+  margin:0;
+  padding:5px;
+  list-style:none;
+  border-radius:8px;
+  background:var(--panel);
+  box-shadow:0 6px 20px rgb(3 13 24 / 40%);
+}
+.appbar-browse-menu a { display:block; padding:9px 11px; border-radius:5px; }
+.appbar-browse-menu a:is(:hover, :focus-visible, [aria-current=page]) { outline:none; background:var(--field); }
+.appbar-browse-menu a[aria-current=page] { color:var(--blue); }
+
 @media (min-width: 651px) {
   /* Mirror the search control around the centered nav without moving the right controls. */
   .tracker .topbar .brand {
@@ -116,4 +166,5 @@ html.appbar-nav-transition-cursor {
 
 @media (prefers-reduced-motion: reduce) {
   .tracker .topbar,.tracker .topbar:has(~ .route-detail-preview) { transition: none; }
+  .appbar-browse-menu { transition:none; }
 }

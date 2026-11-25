@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {browseTab,browseTabHref,createBrowseTabContext,createBrowseTabs,setBrowsePanelUrl} from '../src/lib/browse-tabs.ts';
+import {browseHomeHref} from '../src/lib/browse-navigation.ts';
+import {mediaDomains} from '../src/lib/media-domains.ts';
+
+test('topbar Browse opens the remembered category without carrying a layout or filters',()=>{
+  const domains=mediaDomains({can_access_games:true});
+  assert.equal(browseHomeHref(null,domains),'/browse');
+  assert.equal(browseHomeHref('series',domains),'/browse?type=series');
+  assert.equal(browseHomeHref('game',domains),'/browse/games');
+  assert.equal(browseHomeHref('game',{...domains,can_access_games:false}),'/browse');
+  assert.equal(browseHomeHref('series',{...domains,show_movies_series:false}),'/browse/games');
+});
 
 test('cold and retained tabs share live search and layout with compatible screen filters',()=>{
   const context=createBrowseTabContext();
