@@ -11,6 +11,7 @@ import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {contributorBanner} from '../lib/contributor-banner';
+import {contributorRoleState,disabledContributorOption,personSwitchVisibility} from '../lib/contributor-availability';
 import '../styles/browse.css';
 import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
@@ -33,9 +34,22 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
 let data: ContributorPage | null = null, error = '';
 try {
   if (!key) throw new Error('Not found.');
-  data = await tracker(`${endpoint}?${params}`, Astro.locals.token);
+  const initialParams=new URLSearchParams(params);
+  if(isPerson)initialParams.set('include_tab_snapshot','true');
+  data = await tracker(`${endpoint}?${initialParams}`, Astro.locals.token);
 } catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load this page.'; Astro.response.status = error === 'Not found.' ? 404 : 503; }
 if (isPerson && data && data.kind !== 'studio') params.set('role', data.kind);
+const switches=data&&data.kind!=='studio'?personSwitchVisibility(data.tab_roles,data.kind,
+  params.get('media_type')||'all',data.works.length>0):{role:true,domain:true,screen:true};
+const initialDisabled=(name:string,value:string)=>{
+  if(!data?.tab_roles||data.kind==='studio')return false;
+  const media=params.get('media_type')||'all';
+  const showing=name==='role'?value===data.kind:name==='domain'?value===(games?'game':'movies-series')
+    :!games&&(value==='all'||value===media);
+  if(showing&&data.works.length)return false;
+  if(name==='role')return contributorRoleState(data.tab_roles[value==='staff'?'staff':'actor'],games)==='empty';
+  return disabledContributorOption(name,value,data.tab_roles[data.kind]);
+};
 const age = data ? personAge(data.birthday, data.deathday) : null;
 const biography = biographyPreview(data?.description);
 const facts = data ? [
@@ -93,12 +107,12 @@ listLink.set('list_scope','in'); listLink.set('view',view);
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            {isPerson && <fieldset class="contributor-filter-switch contributor-role-switch"><legend class="sr-only">Credit role</legend><div>
-              <label><input type="radio" name="role" value="actor" checked={data.kind === 'actor'} /><span>Acting</span></label>
-              <label><input type="radio" name="role" value="staff" checked={data.kind === 'staff'} /><span>Staff</span></label>
+            {isPerson && <fieldset class="contributor-filter-switch contributor-role-switch" data-contributor-role-switch hidden={!switches.role}><legend class="sr-only">Credit role</legend><div>
+              <label><input type="radio" name="role" value="actor" checked={data.kind === 'actor'} disabled={initialDisabled('role','actor')} /><span>Acting</span></label>
+              <label><input type="radio" name="role" value="staff" checked={data.kind === 'staff'} disabled={initialDisabled('role','staff')} /><span>Staff</span></label>
             </div></fieldset>}
-            <fieldset class="contributor-filter-switch" hidden={!showMovies||!showGames}><legend>Media</legend><div>{[["movies-series","Movies & Series",showMovies],["game","Games",showGames]].filter(([, ,shown])=>shown).map(([value,label])=><label><input type="radio" name="domain" value={String(value)} checked={games?value==='game':value==='movies-series'}/><span>{label}</span></label>)}</div></fieldset>
-            <fieldset class="contributor-filter-switch" data-contributor-screen-types hidden={games} disabled={games}><legend>Movies & Series</legend><div>{[['all','All','All movies and series'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(games?'all':params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
+            <fieldset class="contributor-filter-switch" data-contributor-media-switch hidden={!showMovies||!showGames||!switches.domain}><legend>Media</legend><div>{[["movies-series","Movies & Series",showMovies],["game","Games",showGames]].filter(([, ,shown])=>shown).map(([value,label])=><label><input type="radio" name="domain" value={String(value)} checked={games?value==='game':value==='movies-series'} disabled={initialDisabled('domain',String(value))}/><span>{label}</span></label>)}</div></fieldset>
+            <fieldset class="contributor-filter-switch" data-contributor-screen-types hidden={games||!switches.screen} disabled={games}><legend>Movies & Series</legend><div>{[['all','All','All movies and series'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(games?'all':params.get('media_type')||'all')===value} disabled={initialDisabled('media_type',value)} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
             {signedIn && <><input type="checkbox" name="list_scope" value="in" checked={params.get('list_scope')==='in'} hidden/><button class="contributor-list-toggle" type="button" data-contributor-list-toggle aria-pressed={params.get('list_scope')==='in'}><Icon name="list"/><span>In my list</span></button></>}
             <button type="submit" class="contributor-apply">Apply</button>
           </form>

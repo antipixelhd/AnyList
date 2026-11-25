@@ -14,7 +14,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
-import {contributorAvailability,contributorRoleState,disabledContributorOption,type ContributorAvailability} from './contributor-availability';
+import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility,type ContributorAvailability} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
@@ -73,7 +73,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     caption.textContent=[...item.characters,...item.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');
     caption.title=caption.textContent;caption.toggleAttribute('data-character-pending',!!item.characters_pending&&!item.characters.length);
   };
-  let availability:ContributorAvailability|undefined;
+  const savedLayout=data.tab_roles;
+  let availability:ContributorAvailability|undefined=data.tab_roles
+    ?{key:data.key,roles:data.tab_roles,pending:false}:undefined;
   const activeDomains=()=>data.kind==='studio'?availability?.domains:availability?.roles?.[data.kind];
   const selectedMedia=()=>params.get('media_type')||'all';
   const canRetainSelection=()=>{
@@ -93,6 +95,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
       const role=availability?.roles?.[input.value==='staff'?'staff':'actor'];
       input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&contributorRoleState(role,games)==='empty';
+    }
+    if(savedLayout&&data.kind!=='studio'){
+      const visible=personSwitchVisibility(availability?.roles,data.kind,media,hasWorks,savedLayout);
+      form.querySelector<HTMLElement>('[data-contributor-role-switch]')!.hidden=!visible.role;
+      const outer=form.querySelector<HTMLElement>('[data-contributor-media-switch]')!;
+      outer.hidden=!visible.domain||outer.querySelectorAll('input[name=domain]').length<2;
+      form.querySelector<HTMLElement>('[data-contributor-screen-types]')!.hidden=games||!visible.screen;
     }
   };
   const paintBanner=mountContributorBanner(root.querySelector<HTMLImageElement>('[data-contributor-banner]')!,signal);
@@ -528,10 +537,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,next=>{
     const previousAvailability=availability?.roles||availability?.domains;
     const previous=activeDomains();
-    availability=next;
+    availability=next.roles?{...next,roles:mergePersonTabRoles(availability?.roles,next.roles)}:next;
     const current=activeDomains();
     paintAvailability();
-    if(previousAvailability&&JSON.stringify(previousAvailability)!==JSON.stringify(next.roles||next.domains)){
+    if(previousAvailability&&JSON.stringify(previousAvailability)!==JSON.stringify(availability.roles||availability.domains)){
       pages.clear();invalidateRetained();
       const media=selectedMedia();
       const available=(domains:NonNullable<typeof current>)=>media==='all'?contributorRoleState(domains,false)==='available'

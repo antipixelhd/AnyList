@@ -13,8 +13,40 @@ from core.game_contributor_works import game_credits
 from core.statistics_staff import ACTING
 from core.studio_groups import studio_companies, studio_root, studio_members, studio_entity_ids
 from models import Media
-from models.catalogue import ContributorEvidence, CatalogueEntity, CatalogueCredit
+from models.catalogue import ContributorEvidence, CatalogueEntity, CatalogueCredit, MetadataSnapshot
 from models.title_credits import TitleCredits
+
+TAB_SNAPSHOT='person_tab_availability'
+PERSON_ROLES=('actor','staff')
+DOMAINS=('movie','series','game')
+
+
+async def saved_person_tabs(db,entity_id,*,include_games):
+    domains=DOMAINS if include_games else ('movie','series')
+    fields=[MetadataSnapshot.payload[f'{role}.{domain}'].astext.label(f'{role}.{domain}')
+        for role in PERSON_ROLES for domain in domains]
+    values=(await db.execute(select(*fields).where(
+        MetadataSnapshot.provider=='anylist',MetadataSnapshot.kind==TAB_SNAPSHOT,
+        MetadataSnapshot.external_id==str(entity_id)))).mappings().one_or_none()
+    if not values:return None
+    roles={role:{domain:values.get(f'{role}.{domain}') or 'unknown'
+        for domain in DOMAINS} for role in PERSON_ROLES}
+    return roles if any(value!='unknown' for domains in roles.values() for value in domains.values()) else None
+
+
+async def save_person_tabs(db,entity_id,states,*,include_games):
+    observed={(role,domain):value for role,domains in states.items() for domain,value in domains.items()
+        if value!='unknown'}
+    if not observed:return
+    previous=await saved_person_tabs(db,entity_id,include_games=include_games) or {}
+    changed={f'{role}.{domain}':value for (role,domain),value in observed.items()
+        if previous.get(role,{}).get(domain)!=value}
+    if not changed:return
+    write=insert(MetadataSnapshot).values(provider='anylist',kind=TAB_SNAPSHOT,
+        external_id=str(entity_id),entity_id=entity_id,payload=changed,fetched_at=evidence.now())
+    await db.execute(write.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
+        'payload':MetadataSnapshot.payload.op('||')(write.excluded.payload),
+        'fetched_at':write.excluded.fetched_at}))
 
 
 def person_domains(credits):
@@ -117,7 +149,7 @@ async def availability(db,viewer,*,kind,key):
     resolved=await resolve_contributor(db,kind,key,include_identities=True)
     if resolved is None:return None
     entity,native,identities=resolved
-    kinds=('actor','staff') if kind=='person' else (kind,)
+    kinds=PERSON_ROLES if kind=='person' else (kind,)
     states,pending,retry=await movie_domains(db,viewer,kind,native,kinds)
     for mode in kinds:
         states[mode]=await preserve_local_movies(db,states[mode],entity,native,mode)
@@ -166,6 +198,8 @@ async def availability(db,viewer,*,kind,key):
                             if states[mode]['game']=='unknown' and role and role.get('source')==0 and role.get('unmapped')==0:
                                 states[mode]['game']='empty'
     if game_pending:delays.append(max(3,min(60,(source or {}).get('retry_after',3))))
+    if kind=='person' and entity:
+        await save_person_tabs(db,entity.id,states,include_games=allowed(viewer))
     await db.commit()
     return {'key':f'catalogue:{entity.id}' if entity else key,
         **({'roles':states} if kind=='person' else {'domains':states[kind]}),

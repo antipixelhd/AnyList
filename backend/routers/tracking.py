@@ -1079,6 +1079,7 @@ async def contributor_details(
     cursor: Annotated[str | None, Query(max_length=400)] = None,
     source: Literal['', 'local', 'provider'] = '',
     role: PersonCreditRole | None = None,
+    include_tab_snapshot: bool = False,
 ) -> ContributorPage:
     from core.contributor_details import contributor_page
     from core.game_contributor_works import GameWorksChanged
@@ -1101,6 +1102,10 @@ async def contributor_details(
         raise HTTPException(502, 'Unable to load more works. Try again.') from None
     if result is None:
         raise HTTPException(404, 'Contributor not found')
+    if kind=='person' and include_tab_snapshot and result['key'].startswith('catalogue:'):
+        from core.contributor_availability import saved_person_tabs
+        from core.game_access import allowed
+        result['tab_roles']=await saved_person_tabs(db,int(result['key'].split(':')[1]),include_games=allowed(viewer))
     return ContributorPage.model_validate(result)
 
 

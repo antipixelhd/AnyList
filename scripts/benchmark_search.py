@@ -239,7 +239,7 @@ async def main(args):
                     db.add(MetadataSnapshot(provider='igdb',kind='game_company_job',external_id='7000000',entity_id=company.id,
                         coverage={'state':'complete','complete':True,'received':1000,'total':1000,'generation':'cached'},
                         payload={'raw_company_evidence':'COMPANY_RAW_SENTINEL '*50000},fetched_at=stamp,expires_at=stamp+timedelta(days=7)))
-                if not args.case or any(name.startswith('game_person') for name in args.case):
+                if not args.case or any(name.startswith('game_person') or name=='person_tab_availability' for name in args.case):
                     db.add(CatalogueIdentity(entity_id=performer.id,namespace='imdb.person',external_id='nm8000000',source='imdb'))
                     stamp=datetime.now(timezone.utc).replace(tzinfo=None)
                     db.add_all([
@@ -386,7 +386,7 @@ async def main(args):
                 first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}
                 db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
             if args.case and {'game_person_availability','person_tab_availability'}.intersection(args.case):
-                from core.contributor_availability import movie_job
+                from core.contributor_availability import TAB_SNAPSHOT, movie_job
                 from core.game_imdb_bindings import revision
                 db.add(CatalogueIdentity(entity_id=game_contributor_id,namespace='tmdb.person',external_id='7000000',source='tmdb'))
                 key,config=movie_job('actor',7000000)
@@ -396,6 +396,10 @@ async def main(args):
                         'raw_movie_credits':'MOVIE_EVIDENCE_SENTINEL '*50000},
                     'expires_at':datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=1),'attempts':0,'next_attempt_at':None}
                 db.add(ContributorEvidence(**availability_evidence))
+                if 'person_tab_availability' in args.case:
+                    db.add(MetadataSnapshot(provider='anylist',kind=TAB_SNAPSHOT,external_id=str(game_contributor_id),
+                        entity_id=game_contributor_id,payload={'actor.movie':'available','actor.series':'empty',
+                            'actor.game':'available','staff.movie':'empty','staff.series':'empty','staff.game':'empty'}))
                 await db.flush()
                 component=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_person_credits',MetadataSnapshot.external_id=='nm8000000'))
                 component.coverage={**component.coverage,'binding_revision':await revision(db),

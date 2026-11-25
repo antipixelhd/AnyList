@@ -9,7 +9,7 @@ from sqlalchemy import event,func,select
 import test_statistics_pg as database
 import test_game_contributor_works_pg as fixture
 from core import contributor_evidence as evidence
-from core.contributor_availability import movie_job
+from core.contributor_availability import movie_job, saved_person_tabs
 from core.game_imdb_enrichment import now
 from core.game_imdb_person import JOB,COMPONENT,VERSION as PERSON_VERSION
 from core.game_credit_roles import CREDIT_POLICY_VERSION
@@ -110,9 +110,25 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
             'actor':{'movie':'available','series':'empty','game':'empty'},
             'staff':{'movie':'empty','series':'empty','game':'empty'}})
         self.assertFalse(result['pending'])
+        async with self.Session() as db:
+            self.assertEqual(await saved_person_tabs(db,entity,include_games=True),result['roles'])
+            job=await db.scalar(select(ContributorEvidence))
+            job.expires_at=now()-timedelta(seconds=1)
+            await db.commit()
+        expired=(await self.read(entity,'person')).json()
+        self.assertEqual(expired['roles']['staff']['series'],'unknown')
+        async with self.Session() as db:
+            self.assertEqual((await saved_person_tabs(db,entity,include_games=True))['staff']['series'],'empty')
+        profile['combined_credits']['crew']=[{'id':2,'name':'Series','media_type':'tv','job':'Director'}]
+        with patch('core.tmdb.get_person',AsyncMock(return_value=profile)):
+            await evidence.run_batch(self.Session)
+        refreshed=(await self.read(entity,'person')).json()
+        self.assertEqual(refreshed['roles']['staff']['series'],'available')
+        async with self.Session() as db:
+            self.assertEqual((await saved_person_tabs(db,entity,include_games=True))['staff']['series'],'available')
         self.viewer.games_access=False
         screen=(await self.read(entity,'person')).json()
-        self.assertEqual(screen['roles']['staff'],{'movie':'empty','series':'empty','game':'unknown'})
+        self.assertEqual(screen['roles']['staff'],{'movie':'empty','series':'available','game':'unknown'})
 
     async def test_unmapped_or_partial_games_never_disable_and_legacy_cache_reprojects_in_background(self):
         entity=await self.person(tmdb=False);await self.person_cache(entity,unmapped=1)

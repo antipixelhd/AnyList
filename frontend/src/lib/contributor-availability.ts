@@ -1,8 +1,9 @@
 export type DomainState='unknown'|'available'|'empty';
 type Domains=Record<'movie'|'series'|'game',DomainState>;
 type PersonRole='actor'|'staff';
+export type PersonTabRoles=Record<PersonRole,Domains>;
 export interface ContributorAvailability {
-  key:string;domains?:Domains;roles?:Record<PersonRole,Domains>;pending:boolean;retry_after?:number;
+  key:string;domains?:Domains;roles?:PersonTabRoles;pending:boolean;retry_after?:number;
 }
 
 export function disabledContributorOption(name:string,value:string,domains:Domains):boolean {
@@ -20,6 +21,35 @@ export function contributorRoleState(domains:Domains, games:boolean):DomainState
   if(games)return domains.game;
   if(domains.movie==='available'||domains.series==='available')return 'available';
   return domains.movie==='empty'&&domains.series==='empty'?'empty':'unknown';
+}
+
+export function mergePersonTabRoles(previous:PersonTabRoles|undefined,next:PersonTabRoles):PersonTabRoles {
+  const merge=(role:PersonRole):Domains=>{
+    const updated={...next[role]};
+    for(const name of domainNames)if(updated[name]==='unknown'&&previous)updated[name]=previous[role][name];
+    return updated;
+  };
+  return {actor:merge('actor'),staff:merge('staff')};
+}
+
+export function personSwitchVisibility(roles:PersonTabRoles|undefined,role:PersonRole,media:string,hasWorks:boolean,
+  saved:PersonTabRoles|undefined=roles) {
+  if(!roles||!saved)return {role:true,domain:true,screen:true};
+  // Newly confirmed negatives still fade on this visit if that choice had
+  // never been checked. A newly found credit may restore a saved hidden choice.
+  const layout=(mode:PersonRole):Domains=>({
+    movie:saved[mode].movie==='unknown'&&roles[mode].movie==='empty'?'unknown':roles[mode].movie,
+    series:saved[mode].series==='unknown'&&roles[mode].series==='empty'?'unknown':roles[mode].series,
+    game:saved[mode].game==='unknown'&&roles[mode].game==='empty'?'unknown':roles[mode].game,
+  });
+  const own=layout(role),other=layout(role==='actor'?'staff':'actor'),games=media==='game';
+  const screen=contributorRoleState(own,false),ownDomain=games?own.game:screen;
+  const singleScreen=(own.movie==='available'&&own.series==='empty')||(own.series==='available'&&own.movie==='empty');
+  return {
+    role: !((hasWorks||ownDomain==='available')&&contributorRoleState(other,games)==='empty'),
+    domain: !((hasWorks||ownDomain==='available')&&(games?screen:own.game)==='empty'),
+    screen: !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
+  };
 }
 
 /** Verify sibling options after paint without replacing works, focus or scroll. */

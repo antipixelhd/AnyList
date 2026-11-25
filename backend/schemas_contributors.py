@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 ContributorKind = Literal["actor", "staff", "studio"]
 PersonCreditRole = Literal['actor', 'staff']
+PersonTabRoles = dict[PersonCreditRole, dict[Literal['movie', 'series', 'game'], Literal['unknown', 'available', 'empty']]]
 ContributorMediaScope = Literal["all", "movie", "series", "game"]
 ListScope = Literal["all", "in", "out"]
 
@@ -24,7 +25,7 @@ class ContributorImages(BaseModel):
 class ContributorAvailability(BaseModel):
     key: str
     domains: dict[Literal['movie','series','game'],Literal['unknown','available','empty']] | None = None
-    roles: dict[PersonCreditRole,dict[Literal['movie','series','game'],Literal['unknown','available','empty']]] | None = None
+    roles: PersonTabRoles | None = None
     pending: bool
     retry_after: int = Field(default=3,ge=1,le=3600)
 
@@ -106,6 +107,7 @@ class ContributorPage(BaseModel):
     links: list[ContributorLink] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=list)
     role_options: list[PersonCreditRole] = Field(default_factory=list, exclude_if=lambda value: not value)
+    tab_roles: PersonTabRoles | None = Field(default=None, exclude_if=lambda value: value is None)
     primary_label: str | None = Field(default=None, exclude_if=lambda value: value is None)
     works: list[ContributorWork]
     known_works: int

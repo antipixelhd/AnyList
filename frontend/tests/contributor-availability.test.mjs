@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {contributorAvailability,contributorRoleState,disabledContributorOption} from '../src/lib/contributor-availability.ts';
+import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility} from '../src/lib/contributor-availability.ts';
 
 test('only verified empty options disable; merged movies/series needs both negatives',()=>{
   for(const movie of ['unknown','available','empty'])for(const series of ['unknown','available','empty']){
@@ -19,6 +19,24 @@ test('role choices follow the selected media and require a verified negative',()
   assert.equal(contributorRoleState(staff,true),'available');
   assert.equal(contributorRoleState({...staff,series:'empty'},false),'empty');
   assert.equal(contributorRoleState({...staff,series:'available'},false),'available');
+});
+
+test('saved negatives collapse redundant switches while unknown checks preserve the layout',()=>{
+  const actor={movie:'available',series:'empty',game:'empty'};
+  const empty={movie:'empty',series:'empty',game:'empty'};
+  const roles={actor,staff:empty};
+  assert.deepEqual(personSwitchVisibility(undefined,'actor','all',true),{role:true,domain:true,screen:true});
+  assert.deepEqual(personSwitchVisibility(roles,'actor','all',true),{role:false,domain:false,screen:false});
+  assert.equal(personSwitchVisibility(roles,'staff','all',false).role,true,'a direct empty view can switch away');
+  assert.equal(personSwitchVisibility(roles,'actor','game',false).domain,true);
+  assert.equal(personSwitchVisibility(roles,'actor','series',false).screen,true);
+  const unknown={movie:'unknown',series:'unknown',game:'unknown'};
+  assert.deepEqual(personSwitchVisibility(roles,'actor','all',true,{actor:unknown,staff:unknown}),
+    {role:true,domain:true,screen:true},'newly confirmed negatives stay visible for the cold visit');
+  assert.deepEqual(mergePersonTabRoles(roles,{actor:unknown,staff:unknown}),roles);
+  const fresh=mergePersonTabRoles(roles,{actor:{...unknown,series:'available',game:'available'},
+    staff:{...unknown,series:'available'}});
+  assert.deepEqual(personSwitchVisibility(fresh,'actor','all',true),{role:true,domain:true,screen:true});
 });
 
 async function fixture(run){
