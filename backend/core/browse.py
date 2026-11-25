@@ -192,7 +192,7 @@ async def iter_browse_sections(
                 mdblist_key=mdblist_key,
                 prefetched=remote,
                 attach_context=False,
-                season_context_size=6,
+                season_context_size=6 if values['sort'] in ('trending', 'newest') else 0,
                 **filters[index],
             )
             section = {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}

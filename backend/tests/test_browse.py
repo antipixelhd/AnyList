@@ -688,10 +688,14 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         shelves = await self.client.get('/tracking/browse/sections', params={'media_type': 'series'})
         self.assertEqual(shelves.status_code, 200, shelves.text)
         sections = {section['filters']['sort']: section for section in shelves.json()['sections']}
-        for sort in ('trending', 'newest', 'popular'):
+        for sort in ('trending', 'newest'):
             self.assertTrue(sections[sort]['results'], sort)
             self.assertEqual(sections[sort]['results'][0]['series_season'], expected, sort)
-        self.assertNotIn('series_season', sections['score']['results'][0])
+        for sort in ('popular', 'score'):
+            self.assertNotIn('series_season', sections[sort]['results'][0])
+        popular = await self.client.get('/tracking/browse', params={'media_type': 'series', 'sort': 'popular'})
+        self.assertEqual(popular.status_code, 200, popular.text)
+        self.assertEqual(popular.json()['results'][0]['series_season'], expected)
         for params in ({'sort': 'oldest'}, {'sort': 'score'}, {'status': 'finished', 'sort': 'title'}):
             response = await self.client.get('/tracking/browse', params={'media_type': 'series', **params})
             self.assertEqual(response.status_code, 200, response.text)

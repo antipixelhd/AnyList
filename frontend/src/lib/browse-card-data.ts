@@ -7,7 +7,7 @@ export function browseSeasonCaption(season?: BrowseSeriesSeason, context?: DateT
   if (!season) return;
   const {number, name, date} = season;
   return {
-    label: name ? `Season ${number} · ${name}` : `Season ${number}`,
+    label: name || `Season ${number}`,
     date,
     dateLabel: formatDate(date, context),
   };
