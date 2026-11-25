@@ -40,11 +40,12 @@ export function createBrowseCard(item:BrowseItem,template:HTMLTemplateElement,si
     const seasonLabel = card.querySelector<HTMLElement>('[data-browse-season]')!;
     seasonLabel.hidden = false;
     seasonLabel.textContent = season.label;
-    if (season.dateLabel && season.date) {
+    seasonLabel.title = season.label;
+    if (season.year && season.date) {
       const seasonDate = card.querySelector<HTMLTimeElement>('[data-browse-season-date]')!;
       seasonDate.hidden = false;
       seasonDate.dateTime = season.date;
-      seasonDate.textContent = season.dateLabel;
+      seasonDate.textContent = season.year;
     }
   }
   const year = card.querySelector<HTMLElement>('[data-year]')!;

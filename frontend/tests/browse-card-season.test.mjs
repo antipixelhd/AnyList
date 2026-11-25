@@ -2,15 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {browseSeasonCaption} from '../src/lib/browse-card-data.ts';
 
-test('season captions prefer the name and format only the known date precision', () => {
-  const german = {locale:'de-DE'};
-  assert.deepEqual(browseSeasonCaption({number:3, name:'The Return', date:'2026-11-25'}, german), {
-    label:'The Return', date:'2026-11-25', dateLabel:'25.11.2026',
+test('season captions prefer the name and display only the year', () => {
+  assert.deepEqual(browseSeasonCaption({number:3, name:'The Return', date:'2026-11-25'}), {
+    label:'The Return', date:'2026-11-25', year:'2026',
   });
-  assert.equal(browseSeasonCaption({number:3, date:'2026-11'}, german).dateLabel, 'November 2026');
-  assert.equal(browseSeasonCaption({number:3, date:'2026'}, german).dateLabel, '2026');
-  assert.deepEqual(browseSeasonCaption({number:3}, german), {
-    label:'Season 3', date:undefined, dateLabel:'',
+  assert.equal(browseSeasonCaption({number:3, date:'2026-11'}).year, '2026');
+  assert.equal(browseSeasonCaption({number:3, date:'2026'}).year, '2026');
+  assert.deepEqual(browseSeasonCaption({number:3}), {
+    label:'Season 3', date:undefined, year:undefined,
   });
-  assert.equal(browseSeasonCaption(undefined, german), undefined);
+  assert.equal(browseSeasonCaption(), undefined);
 });

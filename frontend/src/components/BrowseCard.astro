@@ -24,10 +24,10 @@ const state = item.list_status;
 const game=item.type==='game';
 const href=browseCardHref(item);
 const title = item.series_title || item.title;
-const dateContext = credits || item.series_season?.date
+const dateContext = credits
   ? {locale:requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value)}
   : undefined;
-const season = browseSeasonCaption(item.series_season, dateContext);
+const season = browseSeasonCaption(item.series_season);
 const seasonTitle = season ? `${title}, ${season.label}` : undefined;
 ---
 
@@ -134,10 +134,10 @@ const seasonTitle = season ? `${title}, ${season.label}` : undefined;
       {appearance?.seasons.map((season) => <li>{appearanceSeasonText(season)}</li>)}
     </ul>}
   </div>
-  {(template || season) && <div class="browse-card-season" data-browse-season hidden={!season}>{season?.label}</div>}
   <div class="browse-card-meta">
+    {(template || season) && <span class="browse-card-season" data-browse-season title={season?.label} hidden={!season}>{season?.label}</span>}
     <span data-year hidden={!!season} title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>
-    {(template || season?.dateLabel) && <time data-browse-season-date datetime={season?.date} data-local-date-time="date" hidden={!season?.dateLabel}>{season?.dateLabel}</time>}
+    {(template || season?.year) && <time data-browse-season-date datetime={season?.date} hidden={!season?.year}>{season?.year}</time>}
     <span
       data-user-score
       hidden={!(item.score > 0)}

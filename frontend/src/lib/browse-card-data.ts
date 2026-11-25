@@ -1,15 +1,14 @@
 import {gameCategoryName} from './game-category-store.ts';
-import {formatDate, type DateTimeContext} from './date-time.ts';
 export type BrowseIdentity={id?:number|null;tmdb_id?:number|null;igdb_id?:number|null;type:string;href?:string;release_event?:string|null;game_class?:string;base_listed?:boolean|null};
 export type BrowseSeriesSeason = {number: number; name?: string; date?: string};
 
-export function browseSeasonCaption(season?: BrowseSeriesSeason, context?: DateTimeContext) {
+export function browseSeasonCaption(season?: BrowseSeriesSeason) {
   if (!season) return;
   const {number, name, date} = season;
   return {
     label: name || `Season ${number}`,
     date,
-    dateLabel: formatDate(date, context),
+    year: date?.slice(0, 4),
   };
 }
 

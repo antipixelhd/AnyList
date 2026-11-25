@@ -34,7 +34,6 @@
 .browse-timeline-month h3 { margin:0 0 20px; padding-bottom:14px; border-bottom:1px solid var(--border); font-size:21px; font-weight:600; letter-spacing:-.02em; color:var(--text); }
 .browse-timeline .browse-card-meta :is([data-year], [data-browse-season-date]) { display:none; }
 .browse-timeline .browse-card-meta { justify-content:flex-end; }
-.browse-card:has([data-browse-season]:not([hidden])) .browse-card-meta [data-user-score] { margin-inline-start:auto; }
 @media(max-width:1000px) { .browse-timeline-year { grid-template-columns:80px minmax(0,1fr); gap:20px; }.browse-timeline-year-label { font-size:36px; } }
 @media(max-width:650px) {
   .browse-header { flex-wrap:wrap; gap:18px; }
@@ -657,12 +656,13 @@
   color: var(--blue);
 }
 .browse-card-season {
-  margin-top: 3px;
+  min-width: 0;
+  margin-inline-end: auto;
   color: var(--text);
-  font-size: var(--browse-meta-size);
   font-weight: 500;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .browse-card-meta {
   display: flex;
