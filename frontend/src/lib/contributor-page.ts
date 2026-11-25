@@ -50,6 +50,24 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   const form = root.querySelector<HTMLFormElement>('[data-contributor-filters]')!;
   const listButton=form.querySelector<HTMLButtonElement>('[data-contributor-list-toggle]');
+  // Layout or scroll restoration can place a new control under a stationary pointer.
+  let hoveredControl:HTMLElement|null=null;
+  const clearHover=()=>{
+    hoveredControl?.removeAttribute('data-contributor-pointer-hover');
+    hoveredControl=null;
+  };
+  root.addEventListener('pointermove',event=>{
+    if(event.pointerType!=='mouse'||!(event.movementX||event.movementY)||!(event.target instanceof Element)||
+      hoveredControl?.contains(event.target))return;
+    clearHover();
+    hoveredControl=event.target.closest<HTMLElement>('[data-contributor-list-toggle],[data-browse-card]');
+    hoveredControl?.setAttribute('data-contributor-pointer-hover','');
+  },{signal,passive:true});
+  root.addEventListener('pointerout',event=>{
+    if(hoveredControl&&!hoveredControl.contains(event.relatedTarget as Node|null))clearHover();
+  },{signal,passive:true});
+  form.addEventListener('submit',clearHover,{signal});
+  signal.addEventListener('abort',clearHover,{once:true});
   const paintListButton=()=>listButton?.setAttribute('aria-pressed',String((form.elements.namedItem('list_scope') as HTMLInputElement|null)?.checked===true));
   listButton?.addEventListener('click',()=>{
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement;

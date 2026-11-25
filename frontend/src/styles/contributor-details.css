@@ -77,6 +77,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-filter-switch input:disabled+span { color:var(--muted); background:transparent; opacity:.4; }
 @media (prefers-reduced-motion:no-preference) {
   .contributor-page[data-enhanced] .contributor-filter-switch label>span { transition:background-color 180ms ease,color 180ms ease,opacity 180ms ease; }
+  .contributor-page[data-enhanced] .contributor-list-toggle { transition:background-color 180ms ease,color 180ms ease; }
 }
 .contributor-role-switch { flex:0 0 100%; max-width:none; }
 .contributor-role-switch>div { width:fit-content; }
@@ -91,11 +92,11 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 @media (pointer:coarse) {
   .contributor-compact,.contributor-role-switch label>span { min-height:44px; }
 }
-.contributor-page .contributor-list-toggle { display:flex; align-items:center; justify-content:center; gap:8px; min-height:42px; padding:9px 12px; border:0; border-radius:5px; background:var(--panel); color:var(--muted); font:inherit; font-size:13px; white-space:nowrap; cursor:pointer; transition:background-color 180ms ease,color 180ms ease; }
+.contributor-page .contributor-list-toggle { display:flex; align-items:center; justify-content:center; gap:8px; min-height:42px; padding:9px 12px; border:0; border-radius:5px; background:var(--panel); color:var(--muted); font:inherit; font-size:13px; white-space:nowrap; cursor:pointer; }
 .contributor-page .contributor-list-toggle[aria-pressed=true] { background:var(--blue); color:#fff; }
 .contributor-page .contributor-list-toggle:focus-visible { outline:none; filter:brightness(1.2); }
 @media (hover:hover) and (pointer:fine) {
-  .contributor-page .contributor-list-toggle[aria-pressed=false]:hover { background:var(--surface-raised,var(--bg)); color:var(--bright); }
+  .contributor-page .contributor-list-toggle[aria-pressed=false][data-contributor-pointer-hover]:hover { background:var(--surface-raised,var(--bg)); color:var(--bright); }
 }
 .contributor-apply,.contributor-pagination button,.contributor-pagination>a { border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--text); padding:10px 18px; min-height:42px; cursor:pointer; transition:background-color 180ms ease,border-color 180ms ease,opacity 180ms ease; }
 .contributor-pagination :is(button,a):hover { background:var(--surface-raised,var(--panel)); border-color:var(--blue); }

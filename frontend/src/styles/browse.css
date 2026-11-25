@@ -468,7 +468,7 @@
   transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .browse-cover[data-poster-pending] .browse-poster-link img { opacity: 0; }
-.browse-card:hover .browse-poster-link img {
+.browse-card:hover:where(:not(.contributor-page .browse-card),[data-contributor-pointer-hover]) .browse-poster-link img {
   transform: scale(1.035);
 }
 .browse-placeholder {
@@ -534,7 +534,7 @@
     opacity 0.18s,
     translate 0.18s;
 }
-.browse-card:hover .browse-actions,
+.browse-card:hover:where(:not(.contributor-page .browse-card),[data-contributor-pointer-hover]) .browse-actions,
 .browse-card:has(:focus-visible) .browse-actions,
 .browse-actions:focus-within,
 .browse-card.is-touch-active .browse-actions {
