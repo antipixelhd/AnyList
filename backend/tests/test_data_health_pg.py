@@ -144,13 +144,15 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
             titles = [CatalogueEntity(kind='game', name=name, attributes={'game_class': kind, **attrs})
                 for name, kind, attrs in (
                     ('Both sources', 'game', {}), ('Live only', 'game', {}), ('Local only', 'game', {}),
-                    ('Unconfirmed', 'game', {}), ('Expansion page', 'expansion', {}),
+                    ('Bound, sources unconfirmed', 'game', {}), ('Expansion page', 'expansion', {}),
+                    ('Completed no match', 'game', {}), ('Queued only', 'game', {}),
+                    ('Lookup failed', 'game', {}), ('Legacy unmapped', 'game', {}),
                     ('Port redirect', 'port', {}), ('Bundle redirect', 'bundle', {}),
                     ('Edition redirect', 'expanded_game', {}), ('Mobile title', 'game', {'mobile_only': True}),
                     ('Unclassified', 'unknown', {}))]
             db.add_all(titles)
             await db.flush()
-            both, live, local, unknown, expansion, _, bundle, edition, _, _ = titles
+            both, live, local, unknown, expansion, no_match, queued, failed, legacy, _, bundle, edition, _, _ = titles
             edition.attributes = {**edition.attributes, 'game_bundle_alias': {'work_id': both.id}}
             db.add(CatalogueRelationship(source_id=bundle.id, target_id=both.id, relation='version', provider='igdb',
                 attributes={'edition_type': 'release_bundle', 'source_active': True}))
@@ -168,6 +170,14 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
                 MetadataSnapshot(provider='imdb', kind='game_imdb_identity', external_id=f'v1:tt{live.id}', fetched_at=stamp),
                 MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(local.id),
                     entity_id=local.id, error_code='forbidden'),
+                MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(no_match.id),
+                    entity_id=no_match.id, coverage={'state': 'unmapped', 'checked_no_connection': True}),
+                MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(queued.id),
+                    entity_id=queued.id, next_attempt_at=stamp, coverage={'requested_at': stamp.isoformat()}),
+                MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(failed.id),
+                    entity_id=failed.id, error_code='forbidden'),
+                MetadataSnapshot(provider='imdb', kind='game_credit_job', external_id=str(legacy.id),
+                    entity_id=legacy.id, coverage={'state': 'unmapped'}),
             ])
             await db.flush()
             for game, generation in ((both, 'active'), (local, 'active'), (live, 'old')):
@@ -178,7 +188,8 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         checks = {row['code']: row for row in response.json()['checks']}
         for suffix, expected in (('both', [both]), ('live', [live]), ('local', [local]),
-                                 ('unverified', [unknown, expansion])):
+                                 ('no_connection', [no_match]), ('unchecked', [expansion, queued]),
+                                 ('inconclusive', [unknown, failed, legacy])):
             check = checks[f'imdb_game_{suffix}']
             self.assertEqual(check['count'], len(expected))
             self.assertEqual([row['href'] for row in check['examples']], [f'/games/{game.id}' for game in expected])

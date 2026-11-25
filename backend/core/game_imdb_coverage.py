@@ -17,7 +17,9 @@ CHECKS = (
     ('imdb_game_both', 'Games with live and local IMDb records', 'A live IMDb title observation and a title in the active local IMDb dataset.'),
     ('imdb_game_live', 'Games with a live IMDb record only', 'A live IMDb title observation with no match in the active local dataset.'),
     ('imdb_game_local', 'Games with a local IMDb record only', 'A title in the active local IMDb dataset with no confirmed live observation.'),
-    ('imdb_game_unverified', 'Games without a verified IMDb record', 'Neither source is confirmed. Unmatched games and failed live requests can still have an IMDb record.'),
+    ('imdb_game_no_connection', 'Checked games with no IMDb connection found', 'A completed mapping check found no link through Wikidata or the local IMDb dataset.'),
+    ('imdb_game_unchecked', 'Games not yet checked for IMDb', 'No IMDb check has started. Queued checks are included here until they start.'),
+    ('imdb_game_inconclusive', 'Games with an inconclusive IMDb check', 'A check is in progress, failed, or has insufficient evidence to confirm either source.'),
 )
 
 
@@ -67,10 +69,14 @@ def coverage_query():
     ).cte('imdb_observations').prefix_with('MATERIALIZED')
     c = observations.c
     job = aliased(MetadataSnapshot)
+    checked_no_connection = and_(c.imdb_id.is_(None), job.error_code.is_(None),
+        job.coverage['state'].astext == 'unmapped', job.coverage['checked_no_connection'].as_boolean().is_(True))
+    attempted = or_(c.imdb_id.is_not(None), job.error_code.is_not(None), job.fetched_at.is_not(None),
+        job.lease_token.is_not(None), job.coverage['state'].astext.is_not(None))
     return select(c.id, c.name, case((c.live & c.local, 'imdb_game_both'), (c.live, 'imdb_game_live'),
-        (c.local, 'imdb_game_local'), else_='imdb_game_unverified').label('code'),
-        case((c.imdb_id.is_(None), 'IMDb title match unverified'),
-             (job.error_code.is_not(None), c.imdb_id + ' · Latest live credits refresh failed'),
+        (c.local, 'imdb_game_local'), (checked_no_connection, 'imdb_game_no_connection'),
+        (attempted, 'imdb_game_inconclusive'), else_='imdb_game_unchecked').label('code'),
+        case((job.error_code.is_not(None), func.coalesce(c.imdb_id + ' · ', '') + 'Latest live credits refresh failed'),
              else_=c.imdb_id).label('detail')).select_from(observations.outerjoin(job, and_(
                  job.provider == 'imdb', job.kind == JOB, job.entity_id == c.id, job.external_id == cast(c.id, String))))
 
@@ -86,7 +92,7 @@ async def checks(db):
     for row in rows:
         counts[row.code] = row.total
         examples.setdefault(row.code, []).append({'id': row.id, 'name': row.name,
-            'detail': row.detail, 'href': f'/games/{row.id}'})
+            'detail': row.detail or '', 'href': f'/games/{row.id}'})
     return [{'code': code, 'label': label, 'description': description, 'severity': 'info',
         'unit': 'games', 'action': None, 'count': counts.get(code, 0), 'examples': examples.get(code, [])}
         for code, label, description in CHECKS]

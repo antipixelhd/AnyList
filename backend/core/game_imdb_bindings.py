@@ -247,7 +247,9 @@ class GameIMDbBindings:
                 possible.append((title,decision))
                 if title['value'].get('year') is None or not decision['evidence']['candidates'][0]['years']:uncertain=True
         if not accepted and len(possible)==1:accepted=possible;uncertain=False
-        if len(accepted)!=1 or uncertain:return {'status':'unresolved' if accepted or uncertain else 'unmapped','reason':'local_title_candidates'}
+        if len(accepted)!=1 or uncertain:
+            return {'status': 'unresolved' if accepted or uncertain else 'unmapped', 'reason': 'local_title_candidates',
+                'checked_no_connection': previous['status'] == 'unmapped' and not accepted and not possible}
         title,decision=accepted[0];title_id=title['native']
         from core.wikidata_claims import snak_value
         for mapping in previous.get('mappings',[]):

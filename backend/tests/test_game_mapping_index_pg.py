@@ -422,6 +422,29 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         result=await GameIMDbBindings(self.Session,source=source,wiki=wiki).reverse_lookup(self.base,'10',{'status':'unmapped'})
         self.assertEqual(result['status'],'unresolved')
 
+    async def test_reverse_lookup_records_no_connection_only_after_a_local_check(self):
+        from core.game_imdb_enrichment import GameIMDbEnrichment, JOB, request
+        from core.game_source_cache import GameSourceCache
+
+        raw = {'id': 10, 'name': 'Absent game', 'game_type': {'id': 0}, 'first_release_date': 1577836800}
+        wiki = SimpleNamespace(sources=SimpleNamespace(
+            cache=GameSourceCache(self.Session), igdb=AsyncMock(return_value=[raw])))
+        service = GameIMDbBindings(self.Session, source=SimpleNamespace(), wiki=wiki)
+        previous = {'status': 'unmapped'}
+        self.assertEqual(await service.reverse_lookup(self.base, '10', previous), previous)
+        await self.generation()
+        result = await service.reverse_lookup(self.base, '10', previous)
+        self.assertEqual(result['status'], 'unmapped')
+        self.assertTrue(result['checked_no_connection'])
+        async with self.Session() as db:
+            await request(db, self.base)
+            await db.commit()
+        with patch.object(service, 'resolve', AsyncMock(return_value=result)):
+            self.assertEqual(await GameIMDbEnrichment(self.Session, bindings=service).run(self.base), 'unmapped')
+        async with self.Session() as db:
+            job = await db.scalar(snapshot(JOB, self.base))
+            self.assertTrue(job.coverage['checked_no_connection'])
+
     async def test_reverse_lookup_can_verify_a_game_when_direct_imdb_returns_forbidden(self):
         from core.catalogue_providers import ProviderError
         from core.game_source_cache import GameSourceCache

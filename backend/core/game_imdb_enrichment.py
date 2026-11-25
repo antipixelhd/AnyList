@@ -208,7 +208,8 @@ class GameIMDbEnrichment:
         try:
             binding=await self.bindings.resolve(work_id)
             if binding['status']!='bound':
-                await self.finish_unmatched(work_id,token,binding['status'],expected_request=expected_request)
+                await self.finish_unmatched(work_id,token,binding['status'],expected_request=expected_request,
+                    checked_no_connection=binding.get('checked_no_connection', False))
                 return binding['status']
             title_id=binding['binding']['id']
             binding_revision=(binding['binding'].get('evidence') or {}).get('evidence_revision')
@@ -417,7 +418,7 @@ class GameIMDbEnrichment:
                 job.next_attempt_at=now()
                 await db.commit()
 
-    async def finish_unmatched(self,work_id,token,state,*,expected_request=None):
+    async def finish_unmatched(self,work_id,token,state,*,expected_request=None,checked_no_connection=False):
         async with self.sessions() as db:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if job and job.lease_token==token:
@@ -428,7 +429,8 @@ class GameIMDbEnrichment:
                     job.expires_at=None
                     await db.commit();return
                 job.payload={'state':state,'complete':False}
-                job.coverage=retain_demand(job,{'state':state,'complete':False,'retry_mode':'on_demand'})
+                job.coverage=retain_demand(job,{'state':state,'complete':False,'retry_mode':'on_demand',
+                    **({'checked_no_connection': True} if checked_no_connection else {})})
                 job.lease_token=job.lease_until=job.next_attempt_at=None
                 job.expires_at=content_recheck(await release_context(db,work_id),now())
                 job.error_code=None;job.attempts=0
