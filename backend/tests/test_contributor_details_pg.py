@@ -387,9 +387,24 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_viewer_state_is_private_and_anonymous_filters_require_login(self):
         self.viewer = None
-        self.assertEqual((await self.request()).status_code, 401)
-        self.assertEqual((await self.request(list_scope='in')).status_code, 401)
-        self.assertEqual((await self.request(status='completed')).status_code, 401)
+        async with self.Session() as db:
+            settings = await db.get(GlobalSettings, 1)
+            settings.enable_logged_out_navigation = False
+            await db.commit()
+        self.assertEqual((await self.request('person')).status_code, 401)
+        async with self.Session() as db:
+            settings = await db.get(GlobalSettings, 1)
+            settings.enable_logged_out_navigation = True
+            await db.commit()
+        guest = await self.request('person')
+        self.assertEqual(guest.status_code, 200, guest.text)
+        self.assertEqual(guest.headers['cache-control'], 'private, no-store')
+        self.assertEqual(guest.json()['works'][0]['characters'], ['Fixture Character'])
+        self.assertIsNone(guest.json()['works'][0]['entry'])
+        self.assertIsNone(guest.json()['list_count'])
+        self.assertEqual((await self.request('person', list_scope='in')).status_code, 401)
+        self.assertEqual((await self.request('person', status='completed')).status_code, 401)
+        self.assertEqual((await self.request('person', media_type='game')).status_code, 403)
         await self.login()
         response = await self.request()
         self.assertEqual(response.status_code, 200)

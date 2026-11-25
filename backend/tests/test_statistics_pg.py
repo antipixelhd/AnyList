@@ -463,10 +463,16 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get('/tracking/studios/tmdb:99')).json()['name'], 'Fixture Studio')
         self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.network_id}')).status_code, 404)
         self.assertEqual((await self.client.get('/tracking/studios/invalid:99')).status_code, 422)
+        self.viewer = None
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=True))
+            await db.commit()
+        guest = await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')
+        self.assertEqual(guest.status_code, 200, guest.text)
+        self.assertEqual(guest.json(), detail.json())
         async with self.Session() as db:
             await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
             await db.commit()
-        self.viewer = None
         self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')).status_code, 401)
 
     async def test_legacy_studio_page_uses_saved_company_metadata(self):
@@ -518,10 +524,16 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         detail = await self.client.get(f'/tracking/staff/catalogue:{person_id}')
         self.assertEqual([w['title'] for w in detail.json()['works']], ['Fixture movie'])
+        self.viewer = None
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=True))
+            await db.commit()
+        guest = await self.client.get(f'/tracking/staff/catalogue:{person_id}')
+        self.assertEqual(guest.status_code, 200, guest.text)
+        self.assertEqual(guest.json(), detail.json())
         async with self.Session() as db:
             await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
             await db.commit()
-        self.viewer = None
         self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{person_id}')).status_code, 401)
 
     async def test_legacy_creator_has_a_person_page_without_person_or_credit_projection(self):

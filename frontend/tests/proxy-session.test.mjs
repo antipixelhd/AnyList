@@ -5,17 +5,19 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {isSameOrigin,requiresSameOrigin} from '../src/lib/request-security.ts';
 import {profilePanelRequest,profilePanelHeader,profilePagePath} from '../src/lib/profile-panel-request.ts';
+import {anonymousGameDiscoveryRoute,approvedGamesPage} from '../src/lib/game-public-routes.ts';
 import {GET,POST} from '../src/pages/api/proxy/[...path].ts';
 
-function middleware(){
+function middleware(guestNavigation=false){
   const source=stripTypeScriptTypes(readFileSync(new URL('../src/middleware.ts',import.meta.url),'utf8'))
     .replace(/^import .*;\r?$/gm,'').replace('export const onRequest','const onRequest');
   return runInNewContext(source+';onRequest',{
     defineMiddleware:fn=>fn,sessionCookieName:()=> 'selected_token',
-    crawlerShareResponse:async()=>null,publicLegalPage:()=>false,
+    crawlerShareResponse:async()=>null,publicLegalPage:()=>false,shareLoginPath:()=>'/login',
     isSameOrigin,requiresSameOrigin,Response,URL,process:{env:{}},
-    profilePanelRequest,profilePanelHeader,profilePagePath,
-    api:{auth:{me:()=>{throw new Error('Redundant auth preflight');}}},
+    profilePanelRequest,profilePanelHeader,profilePagePath,anonymousGameDiscoveryRoute,approvedGamesPage,
+    api:{auth:{me:()=>{throw new Error('Redundant auth preflight');}},
+      profile:{publicAccessStatus:async()=>({enable_logged_out_navigation:guestNavigation})}},
   });
 }
 function context(path,method='GET',origin='https://example.test',token='session'){
@@ -24,6 +26,25 @@ function context(path,method='GET',origin='https://example.test',token='session'
     params:{path},locals:{},cookies:{get:name=>name==='selected_token'&&token?{value:token}:undefined},
     redirect:()=>{throw new Error('API requests must return backend status');}};
 }
+
+test('guest contributor requests reach their declared read routes only when guest navigation is enabled',async()=>{
+  for(const [method,path,canRead] of [
+    ['GET','contributors/person/tmdb%3A42',true],
+    ['GET','contributors/person/tmdb%3A42/availability',true],
+    ['GET','contributors/person/catalogue:42/availability',true],
+    ['GET','contributors/person/catalogue:42/images',true],
+    ['GET','contributors/person/catalogue:42/series/7/episode-credits',true],
+    ['GET','contributors/studio/catalogue:42/availability',false],
+    ['POST','contributors/person/catalogue:42/availability',false],
+  ]){
+    for(const enabled of [false,true]){
+      const ctx=context(`tracking/${path}`,method,'https://example.test',null);
+      ctx.redirect=(path,status)=>new Response(null,{status,headers:{Location:path}});
+      const response=await middleware(enabled)(ctx,()=>Response.json({ok:true}));
+      assert.equal(response.status,enabled&&canRead?200:302,`${method} ${path}, guest navigation ${enabled}`);
+    }
+  }
+});
 
 test('all Games API reads reach backend once without a separate account preflight',async t=>{
   const paths=['tracking/games/browse','tracking/games/users/alex/list',

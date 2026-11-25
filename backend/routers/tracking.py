@@ -1071,7 +1071,7 @@ async def contributor_details(
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
-    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
     media_type: ContributorMediaScope = 'all',
     list_scope: ListScope = 'all',
     status: Literal['', 'watching', 'playing', 'played', 'completed', 'planning', 'paused', 'dropped'] = '',
@@ -1108,7 +1108,7 @@ async def contributor_details(
 async def studio_metadata(
     studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
-    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
 ) -> StudioDetail:
     from core.statistics_studios import studio_detail
     await catalog_access(db, viewer)
@@ -1124,7 +1124,7 @@ async def studio_metadata(
 async def staff_metadata(
     person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
-    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
 ) -> PersonDetail:
     from core.statistics_staff import person_detail
     await catalog_access(db, viewer)
