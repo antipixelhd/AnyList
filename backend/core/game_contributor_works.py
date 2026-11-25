@@ -39,17 +39,22 @@ def verified_game_credits(entity_id, kind):
     aliases = select(contributor.id).where(or_(contributor.id == entity_id,
         contributor.canonical_person_id == entity_id, contributor.canonical_company_id == entity_id))
     credited, work, base = (aliased(CatalogueEntity) for _ in range(3))
-    # Conflicting parent evidence never selects an arbitrary platform edition.
+    role = CatalogueCredit.role
+    credit_role = role.in_(COMPANIES) if kind == 'studio' else role.in_(ACTING) if kind == 'actor' else ~role.in_(ACTING) & (role!='thanks')
+    credited_ids = select(CatalogueCredit.work_id).where(
+        CatalogueCredit.contributor_id.in_(aliases), credit_role,
+        CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false')).correlate(None)
+    # Check every active parent of a credited child, without grouping the
+    # rest of the catalogue's relationships.
     parents = select(CatalogueRelationship.source_id.label('child'),
         CatalogueRelationship.relation.label('relation'),
         func.min(CatalogueRelationship.target_id).label('parent')).where(
-        CatalogueRelationship.relation.in_(('port', *CREDIT_CHILDREN)),
+        CatalogueRelationship.source_id.in_(credited_ids),
+        CatalogueRelationship.relation.in_(('port', *(CREDIT_CHILDREN-{'expansion'})) if kind=='actor' else ('port',)),
         CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false')).group_by(
         CatalogueRelationship.source_id, CatalogueRelationship.relation).having(
-        func.count(func.distinct(CatalogueRelationship.target_id)) == 1).subquery()
-    ports, expansions = parents.alias(), parents.alias()
-    role = CatalogueCredit.role
-    role_filter = role.in_(COMPANIES) if kind == 'studio' else role.in_(ACTING) if kind == 'actor' else ~role.in_(ACTING) & (role!='thanks')
+        func.count(func.distinct(CatalogueRelationship.target_id)) == 1).cte('credited_game_parents')
+    role_filter = credit_role
     detailed=aliased(CatalogueCredit)
     detailed_role=select(detailed.id).where(detailed.work_id==CatalogueCredit.work_id,
         detailed.contributor_id.in_(aliases),detailed.attributes['source_active'].astext.is_distinct_from('false'),
@@ -75,8 +80,12 @@ def verified_game_credits(entity_id, kind):
         person_credit.character_label.is_not(None),person_credit.character_label!='').correlate(CatalogueCredit).scalar_subquery()
     independent = INDEPENDENT - {'port'}
     def projected(work, *, child=False, expansion=False):
-        expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(
-            expansions.c.child == work.id, expansions.c.relation == 'expansion', base.kind == 'game',
+        relationship=CatalogueRelationship
+        expansion_parent=select(func.min(relationship.target_id)).where(
+            relationship.source_id==work.id,relationship.relation=='expansion',
+            relationship.attributes['source_active'].astext.is_distinct_from('false')).having(
+            func.count(func.distinct(relationship.target_id))==1).correlate(work).scalar_subquery()
+        expansion_base=select(base.id).where(base.id==expansion_parent,base.kind=='game',
             base.attributes['game_class'].astext.in_(independent)).correlate(work)
         return select(work.id.label('id'), work.name.label('title'), work.image_url.label('poster'),
             func.coalesce(work.attributes['backdrop_path'].astext, work.attributes['artwork'][0].astext).label('backdrop'),
@@ -112,8 +121,8 @@ def verified_game_credits(entity_id, kind):
     # Separate branches retain indexed PK joins. A CASE in the root join caused
     # quadratic scans of game metadata even when no port existed (measured).
     port = projected(work).select_from(CatalogueCredit).join(credited,
-        credited.id == CatalogueCredit.work_id).join(ports, and_(ports.c.child == credited.id,
-        ports.c.relation == 'port')).join(work, work.id == ports.c.parent).where(
+        credited.id == CatalogueCredit.work_id).join(parents, and_(parents.c.child == credited.id,
+        parents.c.relation == 'port')).join(work, work.id == parents.c.parent).where(
         credited.kind == 'game', credited.attributes['game_class'].astext == 'port',
         credited.attributes['mobile_only'].astext.is_distinct_from('true'))
     if kind == 'actor':
@@ -123,8 +132,8 @@ def verified_game_credits(entity_id, kind):
             direct.attributes['credited_child']['kind'].astext.is_(None),
             direct.attributes['source_active'].astext.is_distinct_from('false')).correlate(work).exists()
         child = projected(work,child=True).select_from(CatalogueCredit).join(credited,
-            credited.id==CatalogueCredit.work_id).join(ports,and_(ports.c.child==credited.id,
-            ports.c.relation==credited.attributes['game_class'].astext)).join(work,work.id==ports.c.parent).where(
+            credited.id==CatalogueCredit.work_id).join(parents,and_(parents.c.child==credited.id,
+            parents.c.relation==credited.attributes['game_class'].astext)).join(work,work.id==parents.c.parent).where(
             credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN-{'expansion'}),
             credited.attributes['adult'].astext.is_distinct_from('true'),
             credited.attributes['mobile_only'].astext.is_distinct_from('true'),~direct_participation)
@@ -279,7 +288,6 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         titles = select(titles).where(titles.c.id.not_in(select(bundle_choices.c.hide))).cte('studio_distinct_works')
     labels = select(func.array_agg(func.distinct(func.coalesce(credits.c.role_label,
         func.initcap(func.replace(credits.c.role, '_', ' ')))))).scalar_subquery()
-    counts = (await db.execute(select(func.count(), func.count(titles.c.list_status), labels).select_from(titles))).one()
     filters = []
     if list_scope != 'all':
         filters.append(titles.c.list_status.is_not(None) if list_scope == 'in' else titles.c.list_status.is_(None))
@@ -289,9 +297,15 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
     # The digest covers ordering/membership only. Notes, scores and editor state
     # never enter public source caches or the continuation token.
     from sqlalchemy.dialects.postgresql import aggregate_order_by
-    token = cast(eligible.c.id, String) + ':' + eligible.c.released
-    total, generation = (await db.execute(select(func.count(), func.md5(func.coalesce(
-        func.string_agg(token, aggregate_order_by(literal('|'), eligible.c.id)), ''))).select_from(eligible))).one()
+    token = cast(titles.c.id, String) + ':' + titles.c.released
+    digest = func.string_agg(token, aggregate_order_by(literal('|'), titles.c.id))
+    total = func.count()
+    if filters:
+        digest = digest.filter(*filters)
+        total = total.filter(*filters)
+    summary = select(func.count().label('known_works'), func.count(titles.c.list_status).label('list_count'),
+        labels.label('portfolio_roles'), total.label('total'),
+        func.md5(func.coalesce(digest, '')).label('generation')).select_from(titles).cte('game_contributor_summary')
     scope = f'{kind}:{key}:{viewer.id if viewer else "anonymous"}:{list_scope}:{status}'
     query = select(eligible).order_by(eligible.c.released.desc(), eligible.c.id.desc())
     if cursor:
@@ -303,17 +317,34 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
             released, identifier = after
             if not isinstance(released, str) or len(released) > 32 or type(identifier) is not int or identifier <= 0:
                 raise ValueError()
-            if parsed.get('generation') != generation:
-                raise GameWorksChanged()
             query = query.where(tuple_(eligible.c.released, eligible.c.id) < tuple_(released, identifier))
         except (KeyError, TypeError, json.JSONDecodeError):
             raise ValueError('Invalid game works cursor') from None
     elif page > 1:
         query = query.offset((page - 1) * PAGE_SIZE)
-    rows = (await db.execute(query.limit(PAGE_SIZE + 1))).mappings().all()
+    window = query.limit(PAGE_SIZE + 1).cte('game_contributor_window')
+    source, identifier = credits, credits.c.id
+    if bundle_choices is not None:
+        source = credits.outerjoin(bundle_choices, credits.c.id == bundle_choices.c.hide)
+        identifier = func.coalesce(bundle_choices.c.keep, credits.c.id)
+    associations = select(identifier.label('id'), credits.c.role, credits.c.role_label, credits.c.character_label,
+        credits.c.credit_kind, credits.c.credit_title).select_from(source).where(identifier.in_(select(window.c.id))).distinct().subquery()
+    captions = select(associations.c.id, func.jsonb_agg(func.jsonb_build_array(
+        associations.c.role, associations.c.role_label, associations.c.character_label,
+        associations.c.credit_kind, associations.c.credit_title)).label('captions')).group_by(associations.c.id).cte('game_contributor_captions')
+    # One projection supplies the summary, page and its captions. The outer
+    # join preserves the summary even for an empty page or a stale cursor.
+    records = (await db.execute(select(summary, window, captions.c.captions)
+        .select_from(summary.outerjoin(window, literal(True)).outerjoin(captions, captions.c.id == window.c.id))
+        .order_by(window.c.released.desc(), window.c.id.desc()))).mappings().all()
+    counts = records[0]
+    generation = counts['generation']
+    if cursor and parsed.get('generation') != generation:
+        raise GameWorksChanged()
+    rows = [row for row in records if row['id'] is not None]
     has_more = len(rows) > PAGE_SIZE
     rows = rows[:PAGE_SIZE]
-    displayed = {row['id']: {**dict(row), 'roles': [], 'characters': []} for row in rows}
+    displayed = {row['id']: {**{field: row[field] for field in window.c.keys()}, 'roles': [], 'characters': []} for row in rows}
     # Only visible expansions need hover eligibility. Keep this private read
     # out of count/paging queries and batch all displayed bases together.
     base_ids={row['base_work_id'] for row in rows if row['game_class']=='expansion' and row['base_work_id']}
@@ -322,23 +353,16 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
             GameEntry.user_id==viewer.id,GameEntry.work_id.in_(base_ids))))
         for item in displayed.values():
             if item['game_class']=='expansion':item['base_listed']=item['base_work_id'] in listed_bases
-    if displayed:
-        source, identifier = credits, credits.c.id
-        if bundle_choices is not None:
-            source = credits.outerjoin(bundle_choices, credits.c.id == bundle_choices.c.hide)
-            identifier = func.coalesce(bundle_choices.c.keep, credits.c.id)
-        associations = (await db.execute(select(identifier, credits.c.role, credits.c.role_label,
-            credits.c.character_label,credits.c.credit_kind,credits.c.credit_title).select_from(source)
-            .where(identifier.in_(displayed)).distinct())).all()
-        for identifier, role, label, character,credit_kind,credit_title in associations:
-            item = displayed[identifier]
+    for row in rows:
+        item = displayed[row['id']]
+        for role, label, character, credit_kind, credit_title in row['captions'] or []:
             if credit_kind:
                 source={'kind':credit_kind,'title':credit_title}
                 if source not in item.setdefault('credit_sources',[]):item['credit_sources'].append(source)
             item['roles'].append(label or role.replace('_', ' ').title())
             if character and role in ACTING:
                 item['characters'].append(character)
-    pending=await pending_characters(db,set(displayed)) if kind=='actor' else set()
+    pending=await pending_characters(db,{item['id'] for item in displayed.values() if not item['characters']}) if kind=='actor' else set()
     result = []
     for item in displayed.values():
         if item.get('credit_sources'):item['credit_sources'].sort(key=lambda row:(row['kind'],row['title']))
@@ -350,6 +374,6 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
             'entry': None, 'rating_mode': 'manual'})
     next_cursor = json.dumps({'v': 1, 'scope': scope, 'generation': generation,
         'after': [rows[-1]['released'], rows[-1]['id']]}, separators=(',', ':')) if has_more else None
-    return {'works': result, 'known_works': counts[0], 'list_count': counts[1] if viewer else None,
-        'roles': sorted(set(counts[2] or [])),
-        'total': total, 'page': page, 'has_more': has_more, 'next_cursor': next_cursor, 'source': 'local'}
+    return {'works': result, 'known_works': counts['known_works'], 'list_count': counts['list_count'] if viewer else None,
+        'roles': sorted(set(counts['portfolio_roles'] or [])),
+        'total': counts['total'], 'page': page, 'has_more': has_more, 'next_cursor': next_cursor, 'source': 'local'}
