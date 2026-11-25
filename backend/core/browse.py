@@ -7,6 +7,7 @@ from sqlalchemy import Boolean, Float, and_, case, func, literal, or_, select, t
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
+from core.browse_series_seasons import attach_ranked_seasons, shows_seasons
 from core.catalog_search import matches_result_filters, apply_result_filters, has_release, release_clause, enrich_release_evidence
 from core.cinema_releases import theatrical_dates, theatrical_country_dates, has_cinema_release
 from models import Media
@@ -191,6 +192,7 @@ async def iter_browse_sections(
                 mdblist_key=mdblist_key,
                 prefetched=remote,
                 attach_context=False,
+                season_context_size=6,
                 **filters[index],
             )
             section = {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}
@@ -742,6 +744,7 @@ async def browse_page(
     cursor=None,
     event_view=False,
     attach_context=True,
+    season_context_size=0,
     **filters,
 ):
     """Compose one discovery response using a request-owned metadata session.
@@ -755,6 +758,8 @@ async def browse_page(
         filters = {**filters, 'status': 'upcoming'}
     if term:
         filters = {**filters, 'require_release': False, 'require_poster': False}
+    # A shelf only needs context for its visible six cards. None covers a full page.
+    show_season = shows_seasons(media_type, filters) if season_context_size != 0 and media_type == 'series' else None
     if (not term and filters['sort'] in ('newest', 'upcoming')) or filters.get('status') == 'upcoming' or (term and event_view):
         from core.release_browse import page as release_page
         if term:
@@ -763,7 +768,7 @@ async def browse_page(
             source = 'local'
         return await release_page(db, viewer, media_type=media_type, filters=filters, key=key,
             show_anime=show_anime, page_number=page, cursor=cursor, source=source, prefetched=prefetched,
-            term=term, event_view=event_view, attach_context=attach_context)
+            term=term, event_view=event_view, attach_context=attach_context, show_season=show_season)
     remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
@@ -907,10 +912,10 @@ async def browse_page(
     context_rows = known if remote is not None else [media for media in rows if any(row.get('id') == media.id for row in results)]
     if attach_context:
         await attach_editor_context(db, viewer, results, media_rows=context_rows)
+    media_by_id = {media.id: media for media in context_rows} if term or show_season else {}
+    remote_by_id = {item['id']: item for item in items} if remote is not None and (term or show_season) else {}
     if term:
         from core.catalog_search import media_search_rank
-        media_by_id = {media.id: media for media in (known if remote is not None else rows)}
-        remote_by_id = {item['id']: item for item in items} if remote is not None else {}
         for row in results:
             media = media_by_id.get(row.get('id'))
             metadata = {**(media.tmdb_data or {})} if media else {}
@@ -919,6 +924,9 @@ async def browse_page(
                             poster_path=row.get('poster'))
             row['search_rank'] = media_search_rank(term, metadata, media_type)
         results.sort(key=lambda row: row['search_rank'], reverse=True)
+    if show_season:
+        await attach_ranked_seasons(db, results[:season_context_size], media_by_id, remote_by_id,
+                                    key if remote is not None else None)
     return {
         "results": results,
         "page": page,

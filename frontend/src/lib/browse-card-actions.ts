@@ -4,7 +4,7 @@ import {showActionFailure} from './action-failure';
 import {predictionAllowed} from './predictive-loading';
 import {resolveGameId} from './game-discovery';
 import {localToday} from './date-time';
-import {browseActionLabel,browseStatusLabel,expansionCard,browseCardCanEdit,browseCardQuickActions} from './browse-card-data';
+import {browseActionLabel,browseStatusLabel,expansionCard,browseCardCanEdit,browseCardQuickActions,type BrowseSeriesSeason} from './browse-card-data';
 
 export type BrowseItem = {
   id: number | null; tmdb_id?: number | null; type: string; title: string;
@@ -13,6 +13,7 @@ export type BrowseItem = {
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
   release_date_precision?: string | null; release_quarter?: number | null;
   release_event?: string | null; release_season?: number | null; release_country?: string | null;
+  series_title?: string; series_season?: BrowseSeriesSeason;
   list_status?: string | null; score?: number | null; rating_mode?: string;
   favorite?: boolean;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];

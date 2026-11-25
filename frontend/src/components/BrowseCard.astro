@@ -5,7 +5,7 @@ import {categoryName,defaultGameCategories} from '../lib/list-categories.ts';
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
 import { appearanceSeasonText, contributorMediaLabel, contributorCreditScope, contributorWorkTitle, type ContributorWork } from '../lib/contributor-page-data';
-import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,browseCardCanEdit,browseCardQuickActions} from '../lib/browse-card-data';
+import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,browseCardCanEdit,browseCardQuickActions,browseSeasonCaption} from '../lib/browse-card-data';
 const {
   item = { title: "", type: "movie" },
   signedIn = false,
@@ -23,6 +23,12 @@ const categoryPresentation=(await viewerMediaPreferences(Astro.locals)).list_cat
 const state = item.list_status;
 const game=item.type==='game';
 const href=browseCardHref(item);
+const title = item.series_title || item.title;
+const dateContext = credits || item.series_season?.date
+  ? {locale:requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value)}
+  : undefined;
+const season = browseSeasonCaption(item.series_season, dateContext);
+const seasonTitle = season ? `${title}, ${season.label}` : undefined;
 ---
 
 <article
@@ -38,7 +44,7 @@ const href=browseCardHref(item);
     <a
       class="browse-poster-link"
       href={template ? "#" : href}
-      aria-label={item.title}
+      aria-label={seasonTitle || title}
     >
       <img
         data-poster
@@ -117,8 +123,8 @@ const href=browseCardHref(item);
   </div>
   <div class="browse-card-caption">
   <div class="browse-card-title-row" data-appearance={credits && appearance ? '' : undefined}>
-  <a class="browse-card-title" href={template ? "#" : href}>
-    <h2>{credits ? contributorWorkTitle(item) : item.title}</h2>
+  <a class="browse-card-title" href={template ? "#" : href} aria-label={seasonTitle}>
+    <h2>{credits ? contributorWorkTitle(item) : title}</h2>
     {credits && <span class="contributor-credit-scope" data-work-scope hidden={!item.credit_sources?.length}>{contributorCreditScope(item)}</span>}
   </a>
   {credits && (template || (appearance?.seasons.length || 0) > 1) &&
@@ -128,8 +134,10 @@ const href=browseCardHref(item);
       {appearance?.seasons.map((season) => <li>{appearanceSeasonText(season)}</li>)}
     </ul>}
   </div>
+  {(template || season) && <div class="browse-card-season" data-browse-season hidden={!season}>{season?.label}</div>}
   <div class="browse-card-meta">
-    <span data-year title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>
+    <span data-year hidden={!!season} title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>
+    {(template || season?.dateLabel) && <time data-browse-season-date datetime={season?.date} data-local-date-time="date" hidden={!season?.dateLabel}>{season?.dateLabel}</time>}
     <span
       data-user-score
       hidden={!(item.score > 0)}
@@ -147,7 +155,7 @@ const href=browseCardHref(item);
       <p data-contributor-episode-status role="status"></p>
       <button type="button" data-contributor-episodes-more hidden>More seasons</button>
     </details>}
-  {credits && <time class="browse-work-date" datetime={item.release_date} data-local-date-time="month-day" data-work-date hidden={!item.release_date}>{formatDateTime(item.release_date,'month-day',{locale:requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value)})}</time>}
+  {credits && <time class="browse-work-date" datetime={item.release_date} data-local-date-time="month-day" data-work-date hidden={!item.release_date}>{formatDateTime(item.release_date,'month-day',dateContext)}</time>}
   {credits && <span class="browse-work-type" data-work-type>{contributorMediaLabel(item.type)}</span>}
   </div>
   </div>

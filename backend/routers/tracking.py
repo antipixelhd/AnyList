@@ -1547,6 +1547,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     )
     try:
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions, event_view=timeline,
+            season_context_size=None,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
             status=status, provider=provider, region=region, sort=sort, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),

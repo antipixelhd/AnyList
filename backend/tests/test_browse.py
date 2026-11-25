@@ -19,6 +19,7 @@ from core.browse import (
     remote_params,
     section_specs,
 )
+from core.browse_series_seasons import attach_ranked_seasons, ranked_season
 from db import get_db
 from dependencies import get_current_user, get_optional_user, get_current_user_or_api_key
 from models import Media, User, UserProfileData
@@ -38,6 +39,31 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_ranked_season_prefers_the_active_season_and_uses_its_premiere(self):
+        data = {
+            'status': 'Returning Series',
+            'first_air_date': '2012-01-01',
+            'seasons': [
+                {'season_number': 0, 'air_date': '2025-03-16', 'name': 'Specials'},
+                {'season_number': 2, 'air_date': '2025-02-01', 'episode_count': 8, 'name': 'A New Start'},
+                {'season_number': 3, 'air_date': '2025-03-08', 'episode_count': 8},
+                {'season_number': 4, 'air_date': '2025-07-01', 'episode_count': 8},
+            ],
+            'next_episode_to_air': {'season_number': 2, 'episode_number': 7, 'air_date': '2025-03-22'},
+        }
+        today = date(2025, 3, 17)
+        self.assertEqual(ranked_season(data, today=today),
+                         {'number': 2, 'name': 'A New Start', 'date': '2025-02-01'})
+        del data['next_episode_to_air']
+        self.assertEqual(ranked_season(data, today=today), {'number': 3, 'date': '2025-03-08'})
+
+    def test_ranked_season_does_not_pass_off_the_series_date_as_a_later_premiere(self):
+        data = {'first_air_date': '2010-03-01',
+                'seasons': [{'season_number': 2, 'name': 'Second Act'}],
+                'last_episode_to_air': {'season_number': 2, 'episode_number': 6, 'air_date': '2025-01-10'}}
+        self.assertEqual(ranked_season(data, today=date(2025, 3, 17)), {'number': 2, 'name': 'Second Act'})
+        self.assertIsNone(ranked_season({'first_air_date': '2010-03-01'}, today=date(2025, 3, 17)))
+
     def test_provider_vote_prefilter_does_not_eliminate_popularity_qualifiers(self):
         params = remote_params('movie', page=1, **FILTERS, min_votes=250, min_popularity=25)
         self.assertNotIn('vote_count.gte', params)
@@ -228,6 +254,19 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_light_season_reads_preserve_ranked_rows_on_provider_failure(self):
+        rows = [{'id': None, 'tmdb_id': 10}, {'id': None, 'tmdb_id': 20}]
+        db = AsyncMock()
+        with patch('core.tmdb.get_show_light', AsyncMock(side_effect=[
+                httpx.ConnectError('temporarily unavailable'),
+                {'seasons': [{'season_number': 4, 'air_date': '2020-04-15'}]},
+        ])) as light:
+            await attach_ranked_seasons(db, rows, {}, {}, 'fixture')
+        self.assertEqual(rows, [{'id': None, 'tmdb_id': 10},
+                                {'id': None, 'tmdb_id': 20, 'series_season': {'number': 4, 'date': '2020-04-15'}}])
+        db.commit.assert_awaited_once()
+        self.assertEqual([call.args[0] for call in light.await_args_list], [10, 20])
+
     async def test_ranked_feeds_ignore_popularity_and_vote_floors_without_detail_reads(self):
         feed = [{'id': i, 'title': f'Ranked {i}', 'imdb_votes': 1000,
                  'imdb_id': f'tt{i}', 'imdb_score': 8, 'runtime': 100} for i in range(1, 31)]
@@ -622,6 +661,42 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.get('/tracking/browse',params={'status':status,'media_type':'series','sort':'title'})
             self.assertEqual(response.status_code,200,response.text)
             self.assertEqual([row['id'] for row in response.json()['results']],[expected])
+            if status == 'airing':
+                self.assertEqual(response.json()['results'][0]['series_season'], {'number': 1, 'date': '2020-01-01'})
+
+    async def test_series_shelves_and_grid_project_seasons_only_for_relevant_selections(self):
+        series = Media(title='Fixture series', media_type=MediaType.series, release_date='2000-01-01',
+                       status='Ended', imdb_rating=8, imdb_id='tt9900251', tmdb_rating=9,
+                       tmdb_data={'popularity': 90, 'vote_count': 1000, 'status': 'Ended',
+                                  'imdb': {'votes': 1000, 'popularity_rank': 1},
+                                  'seasons': [{'season_number': 1, 'air_date': '2000-01-01'},
+                                              {'season_number': 2, 'air_date': '2026-03-02', 'name': 'The Return'}]})
+        self.db.add(series)
+        await self.db.commit()
+        expected = {'number': 2, 'name': 'The Return', 'date': '2026-03-02'}
+        shelves = await self.client.get('/tracking/browse/sections', params={'media_type': 'series'})
+        self.assertEqual(shelves.status_code, 200, shelves.text)
+        sections = {section['filters']['sort']: section for section in shelves.json()['sections']}
+        for sort in ('trending', 'newest', 'popular'):
+            self.assertTrue(sections[sort]['results'], sort)
+            self.assertEqual(sections[sort]['results'][0]['series_season'], expected, sort)
+        self.assertNotIn('series_season', sections['score']['results'][0])
+        for params in ({'sort': 'oldest'}, {'sort': 'score'}, {'status': 'finished', 'sort': 'title'}):
+            response = await self.client.get('/tracking/browse', params={'media_type': 'series', **params})
+            self.assertEqual(response.status_code, 200, response.text)
+            row, = response.json()['results']
+            self.assertNotIn('series_season', row)
+            self.assertEqual(row['release_date'], '2000-01-01')
+        series.status = 'Canceled'
+        series.tmdb_data = {**series.tmdb_data, 'status': 'Canceled'}
+        await self.db.commit()
+        response = await self.client.get('/tracking/browse', params={
+            'media_type': 'series', 'status': 'cancelled', 'sort': 'newest', 'timeline': True,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        row = response.json()['results'][0]
+        self.assertEqual(row['series_title'], 'Fixture series')
+        self.assertNotIn('series_season', row)
 
     async def test_runtime_and_categories_apply_before_paging_and_cached_shorts_cannot_reappear_remotely(self):
         from routers.profile import update_profile
@@ -1263,7 +1338,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         cached=Media(title='Silo',media_type=MediaType.series,tmdb_id=990011,release_date='2020-01-01',
             tmdb_data={**raw,'seasons':[{'season_number':2,'air_date':'2098'}]})
         self.db.add(cached);await self.db.flush()
-        detail={**raw,'seasons':[{'season_number':2,'air_date':'2099-02'}]}
+        detail={**raw,'seasons':[{'season_number':2,'air_date':'2099-02','name':'The Return'}]}
         with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
              patch('core.tmdb.search_shows',AsyncMock(return_value={'results':[raw],'total_pages':1})) as search, \
              patch('core.tmdb._get',AsyncMock(return_value=detail)) as metadata:
@@ -1273,6 +1348,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code,200,response.text)
                 rows=response.json()['results']
                 self.assertEqual([(row['title'],row['release_date']) for row in rows],[('Silo · Season 2','2099-02')])
+                self.assertEqual(rows[0]['series_title'], 'Silo')
+                self.assertEqual(rows[0]['series_season'], {'number': 2, 'name': 'The Return', 'date': '2099-02'})
             response=await self.client.get('/tracking/browse',params={'q':'Silo','media_type':'series',
                 'sort':'upcoming','timeline':'true','include_returning':'false'})
             self.assertEqual(response.json()['results'],[])

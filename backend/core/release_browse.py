@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from core import chronological_discovery, release_catalogue
 from core.browse_cursor import encode_search_cursor
+from core.browse_series_seasons import apply_event_season
 from core.catalog_search import known_result_visible
 from core.release_events import window
 from models import Media
@@ -24,7 +25,7 @@ def remote_projection(item, kind):
 
 
 async def page(db, viewer, *, media_type, filters, key, show_anime, page_number, cursor=None,
-               source='', prefetched=None, size=24, term='', event_view=False, attach_context=True):
+               source='', prefetched=None, size=24, term='', event_view=False, attach_context=True, show_season=None):
     from core.tracking_editor import attach_editor_context
     upcoming = filters['sort'] == 'upcoming' or filters.get('status') == 'upcoming'
     if source == 'remote' and not key:
@@ -64,8 +65,15 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
             row = remote_projection(item, media_type)
             if cached:
                 row['id'] = cached.id
+            if show_season is not None:
+                apply_event_season(row, show_season, item, (cached.tmdb_data or {}) if cached else {})
             visible.append(row)
-    local_rows = [release_catalogue.project(media, event) for media, event, _ in local]
+    local_rows = []
+    for media, event, _ in local:
+        row = release_catalogue.project(media, event)
+        if show_season is not None:
+            apply_event_season(row, show_season, event)
+        local_rows.append(row)
     # The full finalized window owns fresh events even after their provider
     # page was consumed. A stale local date must not reintroduce one later.
     provider_keys = set(remote.get('event_keys', ())) if remote else set()
