@@ -15,10 +15,25 @@ test('only verified empty options disable; merged movies/series needs both negat
 
 test('role choices follow the selected media and require a verified negative',()=>{
   const staff={movie:'empty',series:'unknown',game:'available'};
-  assert.equal(contributorRoleState(staff,false),'unknown');
-  assert.equal(contributorRoleState(staff,true),'available');
-  assert.equal(contributorRoleState({...staff,series:'empty'},false),'empty');
-  assert.equal(contributorRoleState({...staff,series:'available'},false),'available');
+  assert.equal(contributorRoleState(staff,'all'),'unknown');
+  assert.equal(contributorRoleState(staff,'game'),'available');
+  assert.equal(contributorRoleState(staff,'movie'),'empty');
+  assert.equal(contributorRoleState({...staff,series:'empty'},'all'),'empty');
+  assert.equal(contributorRoleState({...staff,series:'available'},'all'),'available');
+});
+
+test('an unplayable Games choice hides on repeat visits, while roles with credits elsewhere stay visible',()=>{
+  const actor={movie:'available',series:'empty',game:'unavailable'};
+  const staff={movie:'empty',series:'empty',game:'unavailable'};
+  assert.equal(personSwitchVisibility({actor,staff},'actor','all',true).domain,false);
+  assert.equal(disabledContributorOption('domain','game',actor),true);
+  const gameActor={...actor,game:'available'};
+  assert.equal(personSwitchVisibility({actor:gameActor,staff},'actor','game',true).role,false);
+  const screenStaff={...staff,series:'available'};
+  assert.equal(personSwitchVisibility({actor:gameActor,staff:screenStaff},'actor','game',true).role,true);
+  assert.equal(contributorRoleState(screenStaff,'game'),'unavailable');
+  assert.equal(personSwitchVisibility({actor,staff:screenStaff},'actor','movie',true).role,true);
+  assert.equal(contributorRoleState(screenStaff,'movie'),'empty');
 });
 
 test('saved negatives collapse redundant switches while unknown checks preserve the layout',()=>{

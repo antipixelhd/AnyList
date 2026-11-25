@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 ContributorKind = Literal["actor", "staff", "studio"]
 PersonCreditRole = Literal['actor', 'staff']
-PersonTabRoles = dict[PersonCreditRole, dict[Literal['movie', 'series', 'game'], Literal['unknown', 'available', 'empty']]]
+PersonTabRoles = dict[PersonCreditRole, dict[Literal['movie', 'series', 'game'], Literal['unknown', 'available', 'empty', 'unavailable']]]
 ContributorMediaScope = Literal["all", "movie", "series", "game"]
 ListScope = Literal["all", "in", "out"]
 

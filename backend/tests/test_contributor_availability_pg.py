@@ -181,7 +181,7 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertTrue(response.json()['pending'])
         self.assertLess(response.json()['retry_after'],60)
-        self.assertEqual(response.json()['roles']['actor']['game'],'unknown')
+        self.assertEqual(response.json()['roles']['actor']['game'],'unavailable')
         self.assertEqual(response.json()['roles']['staff']['game'],'available')
         async with self.Session() as db:
             jobs={job.kind:job for job in await db.scalars(select(MetadataSnapshot))}

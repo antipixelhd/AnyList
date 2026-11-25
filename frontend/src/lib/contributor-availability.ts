@@ -1,4 +1,4 @@
-export type DomainState='unknown'|'available'|'empty';
+export type DomainState='unknown'|'available'|'empty'|'unavailable';
 type Domains=Record<'movie'|'series'|'game',DomainState>;
 type PersonRole='actor'|'staff';
 export type PersonTabRoles=Record<PersonRole,Domains>;
@@ -7,7 +7,7 @@ export interface ContributorAvailability {
 }
 
 export function disabledContributorOption(name:string,value:string,domains:Domains):boolean {
-  if(name==='domain')return value==='game'?domains.game==='empty':domains.movie==='empty'&&domains.series==='empty';
+  if(name==='domain')return value==='game'?unavailableChoice(domains.game):domains.movie==='empty'&&domains.series==='empty';
   return value==='all'?domains.movie==='empty'&&domains.series==='empty'
     :value==='movie'||value==='series'?domains[value]==='empty':false;
 }
@@ -15,10 +15,11 @@ export function disabledContributorOption(name:string,value:string,domains:Domai
 const personRoles=['actor','staff'] as const;
 const domainNames=['movie','series','game'] as const;
 const validDomains=(domains?:Domains):domains is Domains=>!!domains&&domainNames.every(
-  name=>['unknown','available','empty'].includes(domains[name]));
+  name=>['unknown','available','empty','unavailable'].includes(domains[name]));
+export const unavailableChoice=(state:DomainState)=>state==='empty'||state==='unavailable';
 
-export function contributorRoleState(domains:Domains, games:boolean):DomainState {
-  if(games)return domains.game;
+export function contributorRoleState(domains:Domains, media:string):DomainState {
+  if(media==='movie'||media==='series'||media==='game')return domains[media];
   if(domains.movie==='available'||domains.series==='available')return 'available';
   return domains.movie==='empty'&&domains.series==='empty'?'empty':'unknown';
 }
@@ -43,11 +44,12 @@ export function personSwitchVisibility(roles:PersonTabRoles|undefined,role:Perso
     game:saved[mode].game==='unknown'&&roles[mode].game==='empty'?'unknown':roles[mode].game,
   });
   const own=layout(role),other=layout(role==='actor'?'staff':'actor'),games=media==='game';
-  const screen=contributorRoleState(own,false),ownDomain=games?own.game:screen;
+  const screen=contributorRoleState(own,'all'),ownDomain=games?own.game:screen;
   const singleScreen=(own.movie==='available'&&own.series==='empty')||(own.series==='available'&&own.movie==='empty');
+  const hasOtherCredits=Object.values(roles[role==='actor'?'staff':'actor']).includes('available');
   return {
-    role: !((hasWorks||ownDomain==='available')&&contributorRoleState(other,games)==='empty'),
-    domain: !((hasWorks||ownDomain==='available')&&(games?screen:own.game)==='empty'),
+    role: hasOtherCredits||!((hasWorks||ownDomain==='available')&&unavailableChoice(contributorRoleState(other,media))),
+    domain: !((hasWorks||ownDomain==='available')&&unavailableChoice(games?screen:own.game)),
     screen: !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
   };
 }
@@ -71,7 +73,7 @@ export function contributorAvailability(endpoint:string,key:string,signal:AbortS
       const choices=person?personRoles.map(role=>next.roles?.[role]):[next.domains];
       if(!choices.every(validDomains))return;
       paint(next);
-      if(next.pending&&choices.some(domains=>domainNames.some(name=>domains[name]==='unknown'))&&++attempts<20)
+      if(next.pending&&choices.some(domains=>domainNames.some(name=>domains[name]==='unknown'||domains[name]==='unavailable'))&&++attempts<20)
         timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(60000,(next.retry_after||3)*1000)));
     }catch{/* Unknown/failed evidence must leave options usable. */}
   };

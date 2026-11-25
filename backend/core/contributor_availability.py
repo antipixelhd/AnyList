@@ -197,6 +197,12 @@ async def availability(db,viewer,*,kind,key):
                             role=roles.get(mode)
                             if states[mode]['game']=='unknown' and role and role.get('source')==0 and role.get('unmapped')==0:
                                 states[mode]['game']='empty'
+                if kind=='person' and source.get('error'):
+                    for mode in kinds:
+                        if states[mode]['game']=='unknown':
+                            # The display projection has no eligible credits,
+                            # and the live source cannot confirm the career.
+                            states[mode]['game']='unavailable'
     if game_pending:delays.append(max(3,min(60,(source or {}).get('retry_after',3))))
     if kind=='person' and entity:
         await save_person_tabs(db,entity.id,states,include_games=allowed(viewer))

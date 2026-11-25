@@ -14,7 +14,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
-import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility,type ContributorAvailability} from './contributor-availability';
+import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility,unavailableChoice,type ContributorAvailability} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
@@ -94,7 +94,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     }
     for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
       const role=availability?.roles?.[input.value==='staff'?'staff':'actor'];
-      input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&contributorRoleState(role,games)==='empty';
+      input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&unavailableChoice(contributorRoleState(role,media));
     }
     if(savedLayout&&data.kind!=='studio'){
       const visible=personSwitchVisibility(availability?.roles,data.kind,media,hasWorks,savedLayout);
@@ -543,8 +543,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     if(previousAvailability&&JSON.stringify(previousAvailability)!==JSON.stringify(availability.roles||availability.domains)){
       pages.clear();invalidateRetained();
       const media=selectedMedia();
-      const available=(domains:NonNullable<typeof current>)=>media==='all'?contributorRoleState(domains,false)==='available'
-        :domains[media as 'movie'|'series'|'game']==='available';
+      const available=(domains:NonNullable<typeof current>)=>contributorRoleState(domains,media)==='available';
       // A verified negative can disable the selected radio without leaving or reloading it.
       if(previous&&current&&!available(previous)&&available(current)&&!items.size&&!filterRequest)form.requestSubmit();
     }

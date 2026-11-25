@@ -11,7 +11,7 @@ import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {contributorBanner} from '../lib/contributor-banner';
-import {contributorRoleState,disabledContributorOption,personSwitchVisibility} from '../lib/contributor-availability';
+import {contributorRoleState,disabledContributorOption,personSwitchVisibility,unavailableChoice} from '../lib/contributor-availability';
 import '../styles/browse.css';
 import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
@@ -47,7 +47,7 @@ const initialDisabled=(name:string,value:string)=>{
   const showing=name==='role'?value===data.kind:name==='domain'?value===(games?'game':'movies-series')
     :!games&&(value==='all'||value===media);
   if(showing&&data.works.length)return false;
-  if(name==='role')return contributorRoleState(data.tab_roles[value==='staff'?'staff':'actor'],games)==='empty';
+  if(name==='role')return unavailableChoice(contributorRoleState(data.tab_roles[value==='staff'?'staff':'actor'],media));
   return disabledContributorOption(name,value,data.tab_roles[data.kind]);
 };
 const age = data ? personAge(data.birthday, data.deathday) : null;
