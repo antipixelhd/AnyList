@@ -175,6 +175,20 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer,.game-newer-edi
 .media-credit-more { margin-top:20px; }
 .media-credit-more[hidden] { display:none; }
 .media-credit-toggle { margin-top:20px; }
+.media-detail [data-detail-panel=people] { container: detail-credits / inline-size; }
+@container detail-credits (min-width: 720px) {
+  .media-detail .media-credit-content {
+    display: grid;
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    /* Keep the cards at their natural height while the disclosure clips the grid. */
+    grid-auto-rows: max-content;
+    align-items: start;
+    gap: 12px;
+  }
+  .media-detail .media-credit-content > :is([data-credit-visible], [data-credit-rest]:not([hidden])) {
+    display: contents;
+  }
+}
 .media-cast-controls { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .media-cast-language { width:180px; max-width:100%; }
 .media-cast-toggle { display:flex; gap:2px; padding:3px; border-radius:20px; background:var(--panel); }

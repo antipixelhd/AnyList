@@ -22,20 +22,6 @@
   grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
 }
 .media-detail[data-media-kind=game] [data-credit-section] { scroll-margin-block-start: 72px; }
-.media-detail[data-media-kind=game] [data-detail-panel=people] { container: game-credits / inline-size; }
-@container game-credits (min-width: 720px) {
-  .media-detail[data-media-kind=game] [data-detail-panel=people] :is([data-credit-visible], [data-credit-rest]) {
-    grid-template-columns: repeat(3,minmax(0,1fr));
-  }
-  .media-detail[data-media-kind=game] [data-credit-content]:has(> [data-credit-rest]:not([hidden])) {
-    display: grid;
-    grid-template-columns: repeat(3,minmax(0,1fr));
-    gap: 12px;
-  }
-  .media-detail[data-media-kind=game] [data-credit-content]:has(> [data-credit-rest]:not([hidden])) > :is([data-credit-visible], [data-credit-rest]) {
-    display: contents;
-  }
-}
 .media-detail .game-overview-credit-group .lab-person > div {
   display: -webkit-box;
   -webkit-box-orient: vertical;
