@@ -6,13 +6,12 @@ import {browseRequestParams} from '../src/lib/browse-view.ts';
 import {gameBrowseRequest,gameBrowseValues} from '../src/lib/game-browse-data.ts';
 import {mediaDomains} from '../src/lib/media-domains.ts';
 
-test('topbar Browse opens the remembered category without carrying a layout or filters',()=>{
+test('Browse opens Movies by default and respects enabled media domains',()=>{
   const domains=mediaDomains({can_access_games:true});
-  assert.equal(browseHomeHref(null,domains),'/browse');
-  assert.equal(browseHomeHref('series',domains),'/browse?type=series');
-  assert.equal(browseHomeHref('game',domains),'/browse/games');
-  assert.equal(browseHomeHref('game',{...domains,can_access_games:false}),'/browse');
-  assert.equal(browseHomeHref('series',{...domains,show_movies_series:false}),'/browse/games');
+  assert.equal(browseHomeHref(domains),'/browse');
+  assert.equal(browseHomeHref({...domains,can_access_games:false}),'/browse');
+  assert.equal(browseHomeHref({...domains,show_movies_series:false}),'/browse/games');
+  assert.equal(browseHomeHref({...domains,show_movies_series:false,can_access_games:false}),'/browse');
 });
 
 test('Browse shortcuts open the selected category with the existing ranking and timeline requests',()=>{

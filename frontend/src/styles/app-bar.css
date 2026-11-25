@@ -38,7 +38,7 @@ html.appbar-nav-transition-cursor {
 .appbar-browse-menu {
   position:absolute;
   inset-block-start:100%;
-  inset-inline-start:var(--browse-label-inset);
+  inset-inline-start:0;
   inline-size:max-content;
   padding-block-start:7px;
   opacity:0;
@@ -84,6 +84,7 @@ html.appbar-nav-transition-cursor {
   font-weight:700;
 }
 .appbar-browse-category-link > .ui-icon {
+  justify-self:start;
   color:var(--muted);
   transition:color 140ms ease;
 }

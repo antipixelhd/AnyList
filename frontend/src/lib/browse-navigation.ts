@@ -1,8 +1,6 @@
 import {browseTab, browseTabHref, type BrowseTab} from './browse-tabs.ts';
 import type {MediaDomains} from './media-domains.ts';
 
-const sessionKey = 'anylist.browse.category';
-
 export const browseNavigationItems = [
   {tab:'movie', label:'Movies', icon:'film'},
   {tab:'series', label:'Series', icon:'tv'},
@@ -33,21 +31,13 @@ export function cleanBrowseHref(tab: BrowseTab) {
   return browseTabHref(tab, new URLSearchParams());
 }
 
-export function browseHomeHref(last: string | null, domains: MediaDomains) {
-  const enabled = browseNavigationItems.filter(({tab}) => browseNavigationEnabled(tab, domains));
-  const choice = enabled.find(({tab}) => tab === last) || enabled[0];
-  return choice ? cleanBrowseHref(choice.tab) : '/browse';
+export function browseHomeHref(domains: MediaDomains) {
+  return !domains.show_movies_series && browseNavigationEnabled('game', domains) ? '/browse/games' : '/browse';
 }
 
 export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, url: URL = new URL(location.href)) {
   const current = browseTab(url);
-  let last: string | null = current ?? null;
-  try {
-    if (current && browseNavigationEnabled(current, domains)) sessionStorage.setItem(sessionKey, current);
-    last = sessionStorage.getItem(sessionKey);
-  } catch { /* Navigation still works when browser storage is disabled. */ }
-
-  const href = browseHomeHref(last, domains);
+  const href = browseHomeHref(domains);
   const targets = document.querySelectorAll<HTMLAnchorElement>('[data-browse-home], [data-mobile-item=browse]');
   targets.forEach(link => {
     link.href = href;
@@ -69,15 +59,14 @@ export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, ur
 
 export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
   const group = nav.querySelector<HTMLElement>('[data-appbar-browse]');
-  const home = group?.querySelector<HTMLAnchorElement>('[data-browse-home]');
   const toggle = group?.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
   const menu = group?.querySelector<HTMLElement>('[data-browse-menu]');
-  if (!group || !home || !toggle || !menu) return;
+  if (!group || !toggle || !menu) return;
 
   const hover = matchMedia('(any-hover: hover)');
-  let pinned = false;
+  let openedByDisclosure = false;
   const close = () => {
-    pinned = false;
+    openedByDisclosure = false;
     toggle.setAttribute('aria-expanded', 'false');
     menu.inert = true;
   };
@@ -86,21 +75,19 @@ export function mountBrowseNavigation(nav: HTMLElement, signal: AbortSignal) {
     toggle.setAttribute('aria-expanded', 'true');
     menu.inert = false;
   };
-  const pin = () => {
-    if (toggle.hidden) return;
-    pinned = true;
-    open();
-  };
   group.addEventListener('pointerenter', event => { if (hover.matches && event.pointerType !== 'touch') open(); }, {signal});
   group.addEventListener('pointerleave', event => {
-    if (event.pointerType !== 'touch' && !pinned && !menu.contains(document.activeElement)) close();
+    if (event.pointerType !== 'touch' && !openedByDisclosure && !menu.contains(document.activeElement)) close();
   }, {signal});
-  toggle.addEventListener('click', () => {
-    if (pinned) close();
-    else pin();
-  }, {signal});
-  home.addEventListener('click', event => {
-    if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) pin();
+  toggle.addEventListener('click', event => {
+    const hoverClick = hover.matches && event.detail > 0 && ('pointerType' in event
+      ? event.pointerType !== 'touch'
+      : group.matches(':hover'));
+    if (!hoverClick && openedByDisclosure) close();
+    else {
+      openedByDisclosure = !hoverClick;
+      open();
+    }
   }, {signal});
   group.addEventListener('focusout', event => {
     if (event.relatedTarget instanceof Node && !group.contains(event.relatedTarget)) close();
