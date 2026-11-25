@@ -232,7 +232,19 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         {gameTitle&&!gameChild&&trackable&&<section class="lab-panel" id="detail-panel-dlc" role="tabpanel" aria-labelledby="detail-tab-dlc" data-detail-panel="dlc" hidden={initialTab!=='dlc'}><MediaDetailDlc/></section>}
         {gameTitle&&!gameChild&&trackable&&signedIn&&<section class="lab-panel" id="detail-panel-achievements" role="tabpanel" aria-labelledby="detail-tab-achievements" data-detail-panel="achievements" hidden={initialTab!=='achievements'}><MediaDetailAchievements id={title.id}/></section>}
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn} removeSpecials={removeSpecials}/></section>}
-        {signedIn&&trackable&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" data-detail-panel="social" hidden={initialTab!=='social'}><div data-detail-social><p class="section-empty">Loading social activity…</p></div></section>}
+        {signedIn&&trackable&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" aria-busy="true" tabindex="-1" data-detail-panel="social" hidden={initialTab!=='social'}>
+          <div class="media-social-grid media-social-skeleton" data-detail-social-skeleton aria-hidden="true">
+            <section>
+              <div class="media-social-heading"><h2>Recent Activity</h2></div>
+              {Array.from({length:2},()=> <div class="media-social-skeleton-row"><span></span><div><span></span><span></span></div></div>)}
+            </section>
+            <section class="media-social-people">
+              <div class="media-social-heading"><h2>People you follow</h2></div>
+              {Array.from({length:2},()=> <div class="media-social-skeleton-row"><span></span><div><span></span><span></span></div></div>)}
+            </section>
+          </div>
+          <div data-detail-social></div>
+        </section>}
         {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label={'Cast'} rows={gameCast?gameCast.actors:credits.cast} id="cast" gameCast={gameCast} loading={(screenTitle||gamePeoplePending)&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label={gameTitle&&credits.studios.length===1?'Studio':'Studios'} rows={credits.studios} id="studios" limit={6}/></>}</section>}
         {(screenTitle||gameTitle||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><p class="section-empty" data-detail-artwork-status hidden></p><div class="lab-gallery" data-detail-artwork-grid>{gamePrimaryPending&&!artwork.length&&Array.from({length:8},()=> <button type="button" class="detail-image-skeleton" disabled aria-hidden="true" tabindex="-1"></button>)}{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img data-gallery-src={detailSceneArtwork(url,null,'direct',title.artwork_thumbnails?.[url])?.src} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
         {gameTitle&&<section class="lab-panel" id="detail-panel-requirements" role="tabpanel" aria-labelledby="detail-tab-requirements" data-detail-panel="requirements" hidden={initialTab!=='requirements'}><MediaDetailGameRequirements info={requirementsAvailable?title.game_info:null}/></section>}

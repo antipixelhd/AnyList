@@ -110,6 +110,12 @@
 .media-detail .media-social-activity .activity-stream { min-width:0; }
 .media-detail .media-social-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:32px; margin-bottom:18px; flex-wrap:wrap; }
 .media-detail .media-social-heading h2 { margin:0; }
+.media-detail .media-social-skeleton[hidden] { display:none; }
+.media-social-skeleton-row { display:flex; align-items:center; gap:13px; padding:11px 13px; margin-block-end:8px; border-radius:7px; background:var(--panel); }
+.media-social-skeleton-row span { display:block; block-size:10px; inline-size:55%; border-radius:4px; background:var(--field); }
+.media-social-skeleton-row > span { flex:0 0 36px; block-size:36px; border-radius:50%; }
+.media-social-skeleton-row > div { display:grid; gap:7px; flex:1; }
+.media-social-skeleton-row > div > span:last-child { inline-size:35%; }
 .media-detail .media-social-switch { display:flex; gap:2px; padding:2px; border-radius:18px; background:var(--panel); }
 .media-detail .media-social-switch button { border:0; border-radius:16px; min-height:28px; padding:4px 9px; font-size:12px; line-height:20px; color:var(--muted); background:transparent; cursor:pointer; transition:background-color .18s ease,color .18s ease; }
 .media-detail .media-social-switch button[aria-selected=true] { color:#fff; background:var(--blue); }

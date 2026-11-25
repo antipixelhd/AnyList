@@ -204,7 +204,8 @@ export function mountMediaDetail() {
   };
   let socialPending:Promise<void>|undefined;
   let socialLoaded=false;
-  let socialRevision=0;
+  const socialPanel=root.querySelector<HTMLElement>('[data-detail-panel=social]');
+  const socialSkeleton=socialPanel?.querySelector<HTMLElement>('[data-detail-social-skeleton]');
   root.addEventListener('click',event=>{
     const tab=(event.target as Element).closest<HTMLButtonElement>('[data-social-scope]');
     const host=tab?.closest<HTMLElement>('.media-social-activity');
@@ -224,9 +225,14 @@ export function mountMediaDetail() {
     event.preventDefault();tabs[next].focus();tabs[next].click();
   },{signal});
   const loadSocial=()=>{
-    const host=root.querySelector<HTMLElement>('[data-detail-social]');
-    if(!host||socialLoaded||socialPending)return;
-    const revision=socialRevision;
+    const host=socialPanel?.querySelector<HTMLElement>('[data-detail-social]');
+    if(!socialPanel||!host||!socialSkeleton||socialLoaded||socialPending)return;
+    if(!host.querySelector('.media-social-grid')){
+      if(host.contains(document.activeElement))socialPanel.focus({preventScroll:true});
+      host.replaceChildren();
+      socialSkeleton.hidden=false;
+      socialPanel.setAttribute('aria-busy','true');
+    }
     socialPending=(async()=>{
       const response=await fetch(`/${info.type==='game'?'games':'title'}/${info.id}/social`,{signal});
       if(!response.ok)throw new Error('Unable to load social activity.');
@@ -243,7 +249,12 @@ export function mountMediaDetail() {
       const message=document.createElement('p');message.className='section-empty';message.textContent=error instanceof Error?error.message:'Unable to load social activity.';
       const retry=document.createElement('button');retry.type='button';retry.className='button-secondary';retry.textContent='Try again';retry.addEventListener('click',loadSocial,{signal});
       host.replaceChildren(message,retry);
-    }).finally(()=>{socialPending=undefined;});
+    }).finally(()=>{
+      socialPending=undefined;
+      if(signal.aborted)return;
+      socialSkeleton.hidden=true;
+      socialPanel.removeAttribute('aria-busy');
+    });
   };
   document.addEventListener('anylist:editor-committed', event => {
     const saved = (event as CustomEvent<{title:EditorTitle}>).detail.title;
@@ -252,7 +263,7 @@ export function mountMediaDetail() {
       await socialPending;
       if (signal.aborted) return;
       socialLoaded = false;
-      if (root.querySelector<HTMLElement>('[data-detail-panel="social"]')?.hidden === false) loadSocial();
+      if (socialPanel?.hidden === false) loadSocial();
     })();
   }, {signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
