@@ -6,7 +6,7 @@ from weakref import WeakKeyDictionary
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 
-from sqlalchemy import Integer, cast, delete, event, func, or_, select, update
+from sqlalchemy import Integer, case, cast, delete, event, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
@@ -15,12 +15,14 @@ from core.enrichment_retry import (CONTENT_FAILURES, content_recheck, schedule_f
     requested_coverage, pause_unused, retain_demand, release_context)
 from core.game_imdb_bindings import GameIMDbBindings, context
 from core.game_imdb_projection import credit_document
-from core.game_imdb_snapshot import DATASET, title_reference
+from core.game_imdb_snapshot import DATASET, FALLBACK_ERRORS, title_reference
 from models.catalogue import CatalogueCredit, CharacterPerformance, MetadataSnapshot
 
 JOB='game_credit_job'
 COMPONENT='game_credits'
 PAGE='game_credit_page'
+DATASET_RETRY_LIMIT = 3
+DATASET_RECHECK_LIMIT = timedelta(days=30)
 _flights={}
 _slots=asyncio.Semaphore(2)
 _wakeups=WeakKeyDictionary()
@@ -64,7 +66,7 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
             await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider==provider,
                 MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==str(work_id)).values(
                     coverage=MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))))
-        return view
+        return usable_credit_status(row, view)
     statement=insert(MetadataSnapshot).values(provider=provider,kind=kind,external_id=str(work_id),
         entity_id=entity_id if entity_id is not None else work_id,next_attempt_at=stamp,coverage=requested_coverage(stamp))
     await db.execute(statement.on_conflict_do_update(
@@ -92,6 +94,11 @@ async def retry_unmapped(db,work_id):
 
 
 async def header(db,work_id,*,kind=JOB,provider='imdb'):
+    dataset_status = ()
+    if kind == JOB and provider == 'imdb':
+        dataset_status = (case((MetadataSnapshot.error_code.in_(FALLBACK_ERRORS)
+            & MetadataSnapshot.coverage['principal_generation'].astext.is_not(None),
+            active_principals(work_id)), else_=False).label('usable_principals'),)
     return (await db.execute(snapshot(kind,work_id,provider=provider).with_only_columns(
         MetadataSnapshot.coverage['state'].astext.label('coverage'),
         MetadataSnapshot.coverage['complete'].as_boolean().label('complete'),
@@ -99,7 +106,13 @@ async def header(db,work_id,*,kind=JOB,provider='imdb'):
         MetadataSnapshot.coverage['total'].as_integer().label('total'),
         MetadataSnapshot.coverage['requested_at'].astext.label('requested_at'),
         MetadataSnapshot.lease_until,MetadataSnapshot.next_attempt_at,MetadataSnapshot.error_code,
-        MetadataSnapshot.expires_at))).one_or_none()
+        MetadataSnapshot.expires_at, *dataset_status))).one_or_none()
+
+
+def active_principals(work_id):
+    return select(CatalogueCredit.id).where(CatalogueCredit.work_id == work_id,
+        CatalogueCredit.provider == DATASET,
+        CatalogueCredit.attributes['source_active'].as_boolean().is_distinct_from(False)).exists()
 
 
 def status_view(row):
@@ -114,8 +127,15 @@ def status_view(row):
         'error':row.error_code,'retry_after':min(3600,delay)}
 
 
+def usable_credit_status(row, view):
+    if getattr(row, 'usable_principals', False):
+        return {**view, 'state': 'ready', 'pending': False, 'error': None}
+    return view
+
+
 async def status(db,work_id,*,kind=JOB,provider='imdb'):
-    return status_view(await header(db,work_id,kind=kind,provider=provider))
+    row = await header(db,work_id,kind=kind,provider=provider)
+    return usable_credit_status(row, status_view(row))
 
 
 class GameIMDbEnrichment:
@@ -390,7 +410,9 @@ class GameIMDbEnrichment:
                     await db.commit();return
                 job.payload=dict(state)
                 job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
-                    'mapping_revalidation':state.get('_mapping_request')})
+                    'mapping_revalidation':state.get('_mapping_request'),
+                    **({'principal_generation': job.coverage['principal_generation']}
+                        if (job.coverage or {}).get('principal_generation') else {})})
                 job.lease_token=job.lease_until=None
                 job.next_attempt_at=now()
                 await db.commit()
@@ -421,7 +443,15 @@ class GameIMDbEnrichment:
                     job.coverage={**(job.coverage or {}),'state':'partial','complete':False}
                 job.lease_token=job.lease_until=None
                 release=await release_context(db,work_id) if code in CONTENT_FAILURES else None
-                schedule_failure(job,code,now(),work=release,retry_after=retry_after)
+                stamp = now()
+                schedule_failure(job,code,stamp,work=release,retry_after=retry_after)
+                if (code in FALLBACK_ERRORS and job.attempts >= DATASET_RETRY_LIMIT
+                        and job.coverage.get('principal_generation') and await db.scalar(select(active_principals(work_id)))):
+                    recheck = content_recheck(await release_context(db,work_id), stamp)
+                    job.expires_at = max(min(recheck, stamp + DATASET_RECHECK_LIMIT),
+                        stamp + timedelta(seconds=retry_after or 0))
+                    job.next_attempt_at = None
+                    job.coverage = {**job.coverage, 'retry_mode': 'on_demand', 'pending': False}
                 await db.commit()
 
     async def release(self,work_id,token):

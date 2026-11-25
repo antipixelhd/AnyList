@@ -84,7 +84,24 @@ class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         header = await title_with_fallback(self.Session, AsyncMock(side_effect=forbidden), 'tt123')
         self.assertEqual(header['titleText']['text'], 'Local title')
         self.source.credits.side_effect = forbidden
-        self.assertEqual(await self.service.run(self.work_id), 'retry')
+        for attempt in range(1, 4):
+            self.assertEqual(await self.service.run(self.work_id), 'retry')
+            async with self.Session() as db:
+                job = await db.scalar(snapshot(JOB, self.work_id))
+                self.assertEqual(job.attempts, attempt)
+                state = await request(db, self.work_id)
+                self.assertEqual((state['state'], state['pending'], state['complete'], state['error']),
+                    ('ready', False, False, None))
+                if attempt < 3:
+                    self.assertIsNotNone(job.next_attempt_at)
+                else:
+                    self.assertIsNone(job.next_attempt_at)
+                    self.assertGreater(job.expires_at, now() + timedelta(days=29))
+                await db.commit()
+            self.assertEqual(await self.service.run(self.work_id), 'cached')
+            if attempt < 3:
+                await self.due()
+        self.assertEqual(self.source.credits.await_count, 3)
         async with self.Session() as db:
             details = await work_details(db, await db.get(CatalogueEntity, self.work_id), extras=False)
         self.assertEqual(actor_card('Exact namesake', details)['characters'], ['Local hero'])
