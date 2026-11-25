@@ -999,7 +999,7 @@ async def save_external_entry(media_id: int, body: ExternalEntryPatch, backgroun
 
 @router.get('/contributors/{kind}/{contributor_key}/images')
 async def contributor_portraits(
-    kind: Literal['actor', 'staff'],
+    kind: Literal['person', 'actor', 'staff'],
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
