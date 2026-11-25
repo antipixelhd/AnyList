@@ -76,6 +76,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   let availability:ContributorAvailability|undefined;
   const activeDomains=()=>data.kind==='studio'?availability?.domains:availability?.roles?.[data.kind];
   const selectedMedia=()=>params.get('media_type')||'all';
+  const canRetainSelection=()=>{
+    const domains=activeDomains();
+    return items.size>0||!domains||!disabledContributorOption(
+      selectedMedia()==='game'?'domain':'media_type',selectedMedia(),domains);
+  };
   const paintAvailability=()=>{
     const domains=activeDomains();
     if(!domains)return;
@@ -372,8 +377,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     let query=contributorParams(submitted,data.list_count!==null);
     const switching=domain(query)!==domain(params);
     const cached=switching?retained.get(retainedKey(query)):undefined;
-    if(switching&&retainCurrent&&!syncing)retained.set(retainedKey(params),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView});
+    if(switching&&retainCurrent&&!syncing){
+      if(canRetainSelection())retained.set(retainedKey(params),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView});
+      else retained.delete(retainedKey(params));
+    }
     if(cached){query=new URLSearchParams(cached.params);requestedView=cached.view;}
+    else if(switching&&domain(query)==='movies-series')query.set('media_type','all');
     region.hidden=false;region.inert=true;
     const readSelection=async()=>{
       for(;;){
@@ -415,7 +424,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           if(listLink){const href=new URL(location.pathname,location.origin);href.search=query.toString();href.searchParams.set('list_scope','in');href.searchParams.set('view',requestedView||'timeline');href.hash='contributor-works';listLink.href=href.href;}
           if(!cached)append(next.works);
           retainCurrent=true;
-          if(cached){restoreFilterControls();root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';paintLayoutControls();}
+          if(switching)restoreFilterControls();
+          if(cached){root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';paintLayoutControls();}
           paintAvailability();
           more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
           const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;

@@ -114,7 +114,7 @@ test('cache invalidation during a tab switch retries the selected domain instead
     scrollY:0,region:{childNodes:[],hidden:false,setAttribute(){},removeAttribute(){},replaceChildren(){}},items:new Map(),
     error:{hidden:true},sourceRefresh:{update(){}},more:{},requestedView:'timeline',
     append:works=>appended.push(...works),updateEmpty(){},syncAgain:false,
-    restoreFilterControls:()=>assert.fail('selection should be retained'),showError:message=>errors.push(message),
+    restoreFilterControls(){},paintAvailability(){},showError:message=>errors.push(message),
     location:{href:'https://example.test/person/1'},history:{replaceState(){}},
   });
   vm.runInContext(stripTypeScriptTypes(snippet),context);
@@ -162,7 +162,7 @@ test('returning to a contributor domain restores exact cards, filters and loaded
     switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,pages:{get(){reads++;throw new Error('Unexpected read');}},revision:0,filterRequest:undefined,prediction:{cancel(){}},
     form:{action:'https://example.test/person/1',querySelector:()=>node,querySelectorAll:()=>[],elements:{namedItem:()=>node},addEventListener:(name,handler)=>submit=handler},
     FormData:class{forEach(fn){fn('game','media_type');fn('actor','role');}},contributorParams:query=>query,
-    domain,retainedKey,retained,retainCurrent:true,syncing:false,scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
+    domain,retainedKey,retained,retainCurrent:true,syncing:false,canRetainSelection:()=>true,paintAvailability(){},scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
     cancelEpisodeCredits:undefined,isPerson:true,paintLayoutControls(){},
     params,data,region,items,error:node,root:{dataset:{endpoint:'people/1'},querySelector:selector=>selector==='.contributor-list-link'?null:node,querySelectorAll:()=>[]},
     sourceRefresh:{update(){}},more:{},requestedView:'timeline',append(){throw new Error('Cards must be retained');},updateEmpty(){},syncAgain:false,

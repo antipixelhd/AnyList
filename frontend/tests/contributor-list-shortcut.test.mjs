@@ -32,7 +32,7 @@ test('explicit filtered results scroll only after the requested works render',as
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},
   FormData:class{forEach(callback){callback('in','list_scope');callback('movie','media_type')}},
   contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:s==='.contributor-list-link'?null:{}},
-  items:new Map(),data:{list_count:2,kind:'actor'},params:new URLSearchParams(),append:()=>order.push('render'),more:{},
+  items:new Map(),data:{list_count:2,kind:'actor'},params:new URLSearchParams(),append:()=>order.push('render'),more:{},paintAvailability(){},
   cancelEpisodeCredits:undefined,isPerson:true,
   location:{href:'https://example.test/person/1'},requestedView:'timeline',history:{state:null,replaceState:(_,__,url)=>urls.push(url)},
   scrollToWorks:target=>{assert.equal(target,works);order.push('scroll')},showError:message=>assert.fail(message)};
