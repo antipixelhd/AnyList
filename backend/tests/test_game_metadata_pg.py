@@ -61,6 +61,65 @@ class Provider:
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_old_igdb_artwork_survives_metadata_refresh_and_is_queried_when_due(self):
+        from core import catalogue
+
+        cover = {'url': 'https://images.igdb.com/igdb/image/upload/t_thumb/cached.jpg'}
+        artwork = [{'url': 'https://images.igdb.com/igdb/image/upload/t_thumb/scene.jpg',
+                    'width': 1920, 'height': 1080, 'image_type': 2}]
+        root_fields = []
+        offline = False
+
+        async def igdb(endpoint, query):
+            if offline:
+                raise ProviderError('unavailable')
+            if endpoint == 'characters':
+                return []
+            fields = query.split(';', 1)[0].removeprefix('fields ').split(',')
+            root_fields.append(fields)
+            raw = {'id': 119133, 'name': 'Released in 1999', 'first_release_date': 915148800,
+                   'game_type': {'id': 0, 'type': 'Main Game'}}
+            if 'cover.url' in fields:
+                raw.update(cover=cover, artworks=artwork)
+            return [raw]
+
+        client = CatalogueProviders()
+        client.validate = lambda *args: None
+        client.igdb = igdb
+        async with self.Session() as db:
+            await catalogue.refresh_metadata(db, client, 'igdb', 'game', '119133')
+            query = select(MetadataSnapshot).where(MetadataSnapshot.provider == 'igdb',
+                MetadataSnapshot.kind == 'game', MetadataSnapshot.external_id == '119133')
+            snapshot = await db.scalar(query)
+            first_observation = snapshot.coverage['artwork_fetched_at']
+            snapshot.expires_at = now() - timedelta(seconds=1)
+            await db.commit()
+            await catalogue.refresh_metadata(db, client, 'igdb', 'game', '119133')
+            await db.refresh(snapshot, attribute_names=['coverage', 'payload'])
+            self.assertEqual(snapshot.coverage['artwork_fetched_at'], first_observation)
+            self.assertEqual(snapshot.payload['game']['cover'], cover)
+            self.assertEqual(snapshot.payload['game']['artworks'], artwork)
+            self.assertNotIn('cover.url', root_fields[1])
+            self.assertNotIn('artworks.url', root_fields[1])
+            self.assertNotIn('screenshots.url', root_fields[1])
+            self.assertIn('dlcs.cover.url', root_fields[1])
+
+            snapshot.expires_at = now() - timedelta(seconds=1)
+            snapshot.coverage = {**snapshot.coverage, 'artwork_fetched_at': (now() - timedelta(days=366)).isoformat()}
+            await db.commit()
+            await catalogue.refresh_metadata(db, client, 'igdb', 'game', '119133')
+            self.assertIn('cover.url', root_fields[2])
+            self.assertIn('artworks.url', root_fields[2])
+            await db.refresh(snapshot)
+            snapshot.expires_at = now() - timedelta(seconds=1)
+            await db.commit()
+            offline = True
+            result = await catalogue.refresh_metadata(db, client, 'igdb', 'game', '119133')
+            self.assertEqual(result['status'], 'last_good')
+            await db.refresh(snapshot, attribute_names=['payload'])
+            self.assertEqual(snapshot.payload['game']['cover'], cover)
+            self.assertEqual(snapshot.payload['game']['artworks'], artwork)
+
     async def test_idle_credit_worker_wakes_after_admission_commit(self):
         from core import game_imdb_enrichment as enrichment
         first=asyncio.Event();second=asyncio.Event();scans=0

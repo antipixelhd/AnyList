@@ -145,7 +145,7 @@ async def save_public(factory, games, *, release_checked=False):
             await db.commit()
 
 
-async def public_metadata(db, apps):
+async def public_metadata(db, apps, *, artwork_context=False):
     """Two compact batch reads replace per-card provider lookups for known data."""
     cached = {row.external_id: dict(row.payload or {}) for row in await db.scalars(select(MetadataSnapshot).where(
         MetadataSnapshot.provider == 'steam', MetadataSnapshot.kind == PUBLIC_KIND, MetadataSnapshot.external_id.in_(apps)))}
@@ -161,6 +161,8 @@ async def public_metadata(db, apps):
             item['name'] = name
         if image:
             item['poster'] = image
+            if artwork_context and image.startswith('https://images.igdb.com/'):
+                item['canonical_cover'] = True
         if category_source=='igdb' and game_class:
             item.update(game_class=game_class,classification_known=True)
     return cached

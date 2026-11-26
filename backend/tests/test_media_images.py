@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -13,6 +14,34 @@ from core import tmdb
 
 
 class ImageProjectionTests(unittest.TestCase):
+    def test_artwork_expiry_uses_release_age_and_preserves_partial_precision(self):
+        from core.artwork_freshness import artwork_expiry
+
+        observed = datetime(2026, 11, 26, 12, tzinfo=timezone.utc)
+        for release, days in [(None, 30), ('2028-01-01', 14), ('2026-11-16', 3),
+                              ('2026-07-12', 7), ('2026-03-05', 30), ('2025-01-01', 90),
+                              ('1999-01-01', 365)]:
+            with self.subTest(release=release):
+                self.assertEqual(artwork_expiry({'release_date': release}, observed), observed + timedelta(days=days))
+        future = artwork_expiry({'release_date': '2026-11-27'}, observed)
+        self.assertEqual(future, datetime(2026, 11, 27, tzinfo=timezone.utc))
+        quarter = {'release_date': '2026', 'release_date_precision': 'quarter', 'release_quarter': 3}
+        self.assertEqual(artwork_expiry(quarter, observed), observed + timedelta(days=7))
+
+    def test_legacy_preview_revalidates_recent_titles_but_reuses_older_artwork(self):
+        from core.media_images import screen_artwork_preview
+
+        stamp = datetime.now(timezone.utc)
+        preview = 'https://artworks.thetvdb.com/previews/scene.jpg'
+        media = SimpleNamespace(release_date='1999-01-01', tmdb_data={'_anylist_artwork_preview': {
+            'image': preview, 'expires_at': (stamp - timedelta(days=10)).isoformat()}})
+        self.assertEqual(screen_artwork_preview(media)['preview_status']['state'], 'ready')
+        media.tmdb_data['_anylist_artwork_preview']['expires_at'] = (stamp + timedelta(days=26)).isoformat()
+        media.release_date = (stamp - timedelta(days=12)).date().isoformat()
+        result = screen_artwork_preview(media)
+        self.assertEqual(result['preview_status']['state'], 'pending')
+        self.assertEqual(result['artwork_preview']['image'], preview)
+
     def test_complete_games_gallery_is_not_a_display_limit(self):
         rows=[f'https://images.igdb.com/igdb/image/upload/t_thumb/sc{i}.jpg' for i in range(23)]
         self.assertEqual(len(unique_images(rows)),10)

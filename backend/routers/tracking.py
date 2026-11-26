@@ -2004,7 +2004,7 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     tvdb_key = await settings_store.get_user_tvdb_key(db, viewer.id)
     await fill_screen_images(db, media, key, tvdb_key)
-    data = screen_images(media, {})
+    data = screen_images(media, {}, allow_stale=not tvdb_key)
     if not tvdb_key:
         data['image_status'] = {'state': 'unavailable', 'error': 'missing_key', 'retry_after': 0}
     return data

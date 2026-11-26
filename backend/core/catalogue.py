@@ -26,8 +26,9 @@ from models.catalogue import (
     MetadataSnapshot,
     SteamPriceSnapshot,
 )
-from .catalogue_normalize import NAMESPACE_KINDS, PRIMARY, identity, document, image
-from .catalogue_providers import ProviderError
+from .catalogue_normalize import GAME_ARTWORK_VERSION, NAMESPACE_KINDS, PRIMARY, identity, document, image
+from .catalogue_providers import IGDB_ARTWORK_FIELDS, ProviderError
+from .artwork_freshness import artwork_expiry, cache_time
 from .enrichment_retry import (CONTENT_FAILURES, schedule_failure, pause_unused,
     retain_demand, release_context, requested_coverage, public_coverage)
 
@@ -717,6 +718,22 @@ async def record_refresh_failure(db, row, token, error, base_delay):
         raise ProviderError("ingestion_failed") from None
 
 
+async def reusable_igdb_artwork(db, row, external_id, now):
+    """Keep the original IGDB artwork observation during metadata-only refreshes."""
+    if not row.fetched_at or (row.coverage or {}).get('artwork_policy_version') != GAME_ARTWORK_VERSION:
+        return None, None
+    fetched = cache_time(row.coverage.get('artwork_fetched_at')) or row.fetched_at
+    work = await release_context(db, row.entity_id)
+    if artwork_expiry(work.attributes if work else {}, fetched) <= now:
+        return None, None
+    game = MetadataSnapshot.payload['game']
+    raw = (await db.execute(select(*(game[key].label(key) for key in IGDB_ARTWORK_FIELDS))
+        .where(MetadataSnapshot.id == row.id, game['id'].astext == external_id))).mappings().one_or_none()
+    # A version ID may resolve to a different root. Fetch the complete
+    # parent projection in that case.
+    return (fetched, {key: value for key, value in raw.items() if value is not None}) if raw is not None else (None, None)
+
+
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
     credit_groups=None, on_primary=None, primary_only=False, publish_in_transaction=None,
@@ -769,6 +786,8 @@ async def refresh_metadata(
     row.lease_token = token
     row.lease_until = now + timedelta(minutes=3)
     snapshot_row_id=row.id
+    artwork_fetched, saved_artwork = (await reusable_igdb_artwork(db, row, external_id, now)
+                                      if provider == 'igdb' else (None, None))
     await db.commit()
     async def verify_game(doc):
         if provider!='igdb':return
@@ -807,6 +826,7 @@ async def refresh_metadata(
             options = {'credit_groups': credit_groups} if credit_groups is not None else {}
             if on_primary and provider=='igdb':options['on_primary']=primary
             if primary_only:options['primary_only']=True
+            if saved_artwork is not None:options['include_artwork']=False
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
@@ -828,12 +848,20 @@ async def refresh_metadata(
             if expected_entity_id and entity.id != expected_entity_id:
                 raise IdentityConflict('Existing title bridge requires review')
             row.entity_id = entity.id
+            if saved_artwork is not None and str((payload.get('game') or {}).get('id')) == external_id:
+                payload['game'] = {**saved_artwork, **payload['game']}
+            else:
+                artwork_fetched = None
             row.payload = payload
             row.coverage = retain_demand(row,doc.get("coverage", {}))
             row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.expires_at = row.fetched_at + timedelta(
                 days=30 if provider == "hardcover" else 7
             )
+            if provider == 'igdb':
+                artwork_fetched = artwork_fetched or row.fetched_at
+                row.coverage = {**row.coverage, 'artwork_fetched_at': artwork_fetched.isoformat()}
+                row.expires_at = min(row.expires_at, artwork_expiry(entity.attributes or {}, artwork_fetched))
             row.attempts = 0
             row.error_code = None
             row.next_attempt_at = None

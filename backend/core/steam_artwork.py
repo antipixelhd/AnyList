@@ -1,5 +1,4 @@
 """Repair imported artwork from exact Steam references, outside tracking writes."""
-from datetime import datetime, timedelta
 import asyncio
 
 import httpx
@@ -7,6 +6,7 @@ import httpx
 from sqlalchemy import select
 
 from core import catalogue, steam_cache
+from core.artwork_freshness import artwork_expiry, cache_time
 from core.catalogue_normalize import image
 from core.catalogue_providers import ProviderError
 from core.config import settings
@@ -41,17 +41,15 @@ async def refresh(factory, games, *, source=None, fallback=None):
     if not apps:
         return
     async with factory() as db:
-        cached=await steam_cache.public_metadata(db, apps)
+        cached=await steam_cache.public_metadata(db, apps, artwork_context=True)
     stamp=steam_cache.now()
     due=[]
     for app in apps:
         item=cached.get(app,{})
-        # Canonical artwork already wins. Failed acquisition is retryable;
-        # successful empty/ambiguous references have a bounded negative cache.
-        if item.get('poster') and 'images.igdb.com/' in item['poster']:
-            continue
-        checked=item.get('artwork_checked_at')
-        if not checked or datetime.fromisoformat(checked)<=stamp-timedelta(days=30):
+        if item.get('canonical_cover'):
+            continue  # The canonical IGDB artwork refresh owns this cover.
+        checked=cache_time(item.get('artwork_checked_at'))
+        if not checked or artwork_expiry(item, checked) <= stamp:
             due.append(app)
     if source is None:
         source=GameBrowseSources(factory)
@@ -78,7 +76,9 @@ async def refresh(factory, games, *, source=None, fallback=None):
                     value.update(poster=poster,poster_source='igdb',poster_verified=True)
             values.append(value)
         async def complete(value):
-            if not value.get('poster') and fallback:
+            existing = cached.get(value['app_id'], {})
+            if not value.get('poster') and fallback and not (existing.get('poster_verified') or
+                    'images.igdb.com/' in (existing.get('poster') or '')):
                 try:
                     poster=await fallback(value['app_id'])
                 except ProviderError:

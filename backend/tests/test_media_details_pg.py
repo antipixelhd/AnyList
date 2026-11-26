@@ -366,7 +366,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media = await db.get(Media, self.media_id)
             media.tmdb_id = 99
-            media.tmdb_data = {'_anylist_images': {'version':IMAGE_POLICY_VERSION, 'posters':['https://example.test/old.jpg']}}
+            media.tmdb_data = {'_anylist_images': {'version':IMAGE_POLICY_VERSION - 1,
+                'posters':['https://example.test/old.jpg'], 'artwork':['https://example.test/scene.jpg']}}
             await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
               patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture')),
@@ -376,6 +377,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get(f'/tracking/title/{self.media_id}/images')
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('https://example.test/old.jpg', response.json()['posters'])
+                self.assertEqual(response.json()['artwork'], ['https://example.test/scene.jpg'])
+                self.assertEqual(response.json()['image_status']['state'], 'deferred')
             fetch.assert_awaited_once()
 
     async def test_legacy_image_cache_is_refreshed_even_when_its_expiry_is_in_the_future(self):

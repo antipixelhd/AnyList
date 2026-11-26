@@ -42,10 +42,14 @@ class GameSourceCache:
             MetadataSnapshot.kind == kind, MetadataSnapshot.external_id == f'{SCHEMA_VERSION}:{key}')
 
     @staticmethod
-    def view(row, now, max_stale, accept=None):
-        if row and row.payload is not None and row.fetched_at and now-row.fetched_at <= max_stale and (accept is None or accept(row.payload)):
+    def view(row, now, max_stale, accept=None, expiry=None):
+        if (row and row.payload is not None and row.fetched_at
+                and (max_stale is None or now-row.fetched_at <= max_stale)
+                and (accept is None or accept(row.payload))):
+            deadline = expiry(row.fetched_at) if expiry and row.expires_at else row.expires_at
+            fresh = deadline and deadline > now and not (expiry and row.error_code)
             return dict(data=row.payload, fetched_at=row.fetched_at.isoformat(),
-                stale=not bool(row.expires_at and row.expires_at > now), error=row.error_code)
+                stale=not bool(fresh), error=row.error_code)
         return None
 
     async def prune(self, db, provider, kind, now):
@@ -73,13 +77,13 @@ class GameSourceCache:
             raise ProviderError('cursor_expired')
         return row[0]
 
-    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3), progressive=False, accept=None):
+    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3), progressive=False, accept=None, expiry=None):
         if not kind.startswith('game_'):
             raise ProviderError('invalid_request')
         async with self.sessions() as db:
             row = await db.scalar(self.query(provider, kind, key))
         now = utcnow()
-        previous = self.view(row, now, max_stale, accept)
+        previous = self.view(row, now, max_stale, accept, expiry)
         if previous and not previous['stale']:
             return previous
         scope=f'cache:{provider}:{kind}:{key}'
@@ -106,7 +110,8 @@ class GameSourceCache:
                     return previous
                 raise ProviderError('rate_limited')
             with work_context(max(current.get().priority,Priority.FINISH),scope=scope):
-                task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive, accept=accept))
+                task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale,
+                    progressive=progressive, accept=accept, expiry=expiry))
             _flights[flight_key] = task
             def finished(done):
                 if _flights.get(flight_key) is done:
@@ -130,7 +135,7 @@ class GameSourceCache:
         except TimeoutError:
             async with self.sessions() as db:
                 row=await db.scalar(self.query(provider,kind,key))
-            return self.view(row,utcnow(),kwargs.get('max_stale',timedelta(days=3)),kwargs.get('accept')) or {
+            return self.view(row,utcnow(),kwargs.get('max_stale',timedelta(days=3)),kwargs.get('accept'),kwargs.get('expiry')) or {
                 'data':None,'stale':True,'error':None}
 
     async def publish(self,provider,kind,key,token,data,max_stale):
@@ -148,7 +153,7 @@ class GameSourceCache:
             row.coverage={**(row.coverage or {}),'page_complete':False}
             await db.commit()
 
-    async def refresh(self, provider, kind, key, loader, ttl, max_stale, *, progressive=False, accept=None):
+    async def refresh(self, provider, kind, key, loader, ttl, max_stale, *, progressive=False, accept=None, expiry=None):
         self.query(provider,kind,key)  # Validate the persisted namespace before INSERT.
         token = uuid.uuid4().hex
         async with self.sessions() as db:
@@ -156,8 +161,8 @@ class GameSourceCache:
                 .on_conflict_do_nothing())
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
             now = utcnow()
-            previous = self.view(row, now, max_stale, accept)
-            if row.expires_at and row.expires_at > now and previous:
+            previous = self.view(row, now, max_stale, accept, expiry)
+            if previous and not previous['stale']:
                 await db.commit()
                 return previous
             if row.lease_until and row.lease_until > now:
@@ -203,7 +208,7 @@ class GameSourceCache:
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
             now = utcnow()
             if row.lease_token != token:
-                previous = self.view(row, now, max_stale, accept)
+                previous = self.view(row, now, max_stale, accept, expiry)
                 await db.commit()
                 if previous:
                     return previous
@@ -223,12 +228,13 @@ class GameSourceCache:
                     from core.game_candidate_observations import invalidate_observed
                     observed={**data,'scope_names':sorted(set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[])))}
                     await invalidate_observed(db,key,observed)
-                row.payload, row.fetched_at, row.expires_at = data, now, now+(ttl(data) if callable(ttl) else ttl)
+                row.payload, row.fetched_at = data, now
+                row.expires_at = expiry(now) if expiry else now+(ttl(data) if callable(ttl) else ttl)
                 row.error_code, row.next_attempt_at, row.attempts = None, None, 0
                 if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}
             await self.prune(db, provider, kind, now)
             await db.commit()
-            result = self.view(row, now, max_stale, accept)
+            result = self.view(row, now, max_stale, accept, expiry)
         if result:
             return result
         raise ProviderError(error or 'unavailable')

@@ -9,6 +9,7 @@ from weakref import WeakValueDictionary
 from sqlalchemy import func, literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 
+from core.artwork_freshness import artwork_expiry, cache_time, saved_expiry
 from core.catalogue_normalize import image
 from core.screen_artwork import original_artwork_language
 from models import Media
@@ -92,6 +93,18 @@ def metahub_backdrop(media):
     return None
 
 
+def _release(media):
+    data = media.tmdb_data or {}
+    original = getattr(media, 'release_date', None) or data.get('release_date') or data.get('first_air_date')
+    latest = data.get('last_air_date')
+    return {'release_date': max(original or '', latest) if isinstance(latest, str) else original}
+
+
+def _fresh(cache, media, now):
+    expiry = saved_expiry(cache, _release(media), legacy_days=30)
+    return bool(expiry and expiry > now)
+
+
 def screen_backdrop(media):
     cache=(media.tmdb_data or {}).get('_anylist_backdrop') or {}
     direct=metahub_backdrop(media)
@@ -108,12 +121,13 @@ def screen_backdrop(media):
                 'background_status':{'state':'ready'}}
     retry=0
     try:
-        if cache.get('version')==BACKGROUND_POLICY_VERSION:
+        if cache.get('retry_version', cache.get('version')) == BACKGROUND_POLICY_VERSION:
             retry=max(0,int((datetime.fromisoformat(cache.get('retry_after',''))-datetime.now(timezone.utc)).total_seconds())+1)
     except (ValueError,TypeError):pass
-    selected=image(cache.get('image')) if cache.get('version')==BACKGROUND_POLICY_VERSION else None
+    current = cache.get('version') == BACKGROUND_POLICY_VERSION
+    selected=image(cache.get('image')) if current or cache.get('last_error') else None
     return {'backdrop':selected or next(iter(fallbacks),None),**fallback,
-        'background_status':{'state':'deferred' if retry else 'ready' if cache.get('version')==BACKGROUND_POLICY_VERSION else 'pending',
+        'background_status':{'state':'deferred' if retry else 'ready' if current and _fresh(cache, media, datetime.now(timezone.utc)) else 'pending',
             'error':cache.get('last_error') if retry else None,'retry_after':retry}}
 
 
@@ -137,9 +151,7 @@ async def fill_screen_backdrop(db,media,api_key):
         cache=dict((media.tmdb_data or {}).get('_anylist_backdrop') or {})
         if screen_backdrop(media)['background_status']['retry_after']:return
         now=datetime.now(timezone.utc)
-        try:
-            if cache.get('version')==BACKGROUND_POLICY_VERSION and datetime.fromisoformat(cache.get('expires_at',''))>now:return
-        except (ValueError,TypeError):pass
+        if cache.get('version') == BACKGROUND_POLICY_VERSION and _fresh(cache, media, now):return
         from core import tmdb
         try:
             if media.media_type.value=='movie':
@@ -149,15 +161,15 @@ async def fill_screen_backdrop(db,media,api_key):
             else:
                 raw=await tmdb.get_title_images(media.tmdb_id,'series',api_key=api_key)
                 selected=best_tmdb_backdrop(raw)
-            cache={'image':selected,'version':BACKGROUND_POLICY_VERSION,'fetched_at':now.isoformat(),'expires_at':(now+timedelta(days=30)).isoformat()}
+            cache={'image':selected,'version':BACKGROUND_POLICY_VERSION,'fetched_at':now.isoformat(),
+                   'expires_at':artwork_expiry(_release(media), now).isoformat()}
         except Exception as error:
             logger.warning('Background artwork failed for media %s (%s)',media.id,type(error).__name__)
             delay=600
             if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429:
                 from core.catalogue_providers import retry_after_seconds
                 delay=max(delay,retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
-            if cache.get('version')!=BACKGROUND_POLICY_VERSION:cache={}
-            cache.update(version=BACKGROUND_POLICY_VERSION,retry_after=(now+timedelta(seconds=delay)).isoformat(),last_error='rate_limited' if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429 else 'unavailable')
+            cache.update(retry_version=BACKGROUND_POLICY_VERSION,retry_after=(now+timedelta(seconds=delay)).isoformat(),last_error='rate_limited' if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429 else 'unavailable')
         await db.execute(update(Media).where(Media.id==media.id).values(
             tmdb_data=func.coalesce(Media.tmdb_data,literal({},type_=JSONB)).op('||')({'_anylist_backdrop':cache})))
         await db.commit();await db.refresh(media)
@@ -172,9 +184,10 @@ def artwork_language_checked(cache, language, field):
 
 def screen_artwork_preview(media):
     cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
-    remaining=0
-    try:remaining=max(0,int((datetime.fromisoformat(cache.get('expires_at',''))-datetime.now(timezone.utc)).total_seconds()))
-    except (ValueError,TypeError):pass
+    expiry = (cache_time(cache.get('retry_after') or cache.get('expires_at')) if cache.get('last_error')
+              else cache_time(cache.get('expires_at')) if cache.get('unmatched')
+              else saved_expiry(cache, _release(media), legacy_days=30))
+    remaining = max(0, int((expiry - datetime.now(timezone.utc)).total_seconds()) + 1) if expiry else 0
     if not cache.get('last_error') and not artwork_language_checked(cache, original_artwork_language(media), 'image'):
         remaining = 0
     return {'artwork_preview':{'image':image(cache.get('image')),'thumbnail':image(cache.get('thumbnail'))},
@@ -191,10 +204,7 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
         cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
         now=datetime.now(timezone.utc)
         language = original_artwork_language(media)
-        if cache.get('last_error') or artwork_language_checked(cache, language, 'image'):
-            try:
-                if datetime.fromisoformat(cache.get('expires_at',''))>now:return
-            except (ValueError,TypeError):pass
+        if screen_artwork_preview(media)['preview_status']['state'] != 'pending':return
         from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
         try:
             raw=await title_artwork(db,media,tvdb_key,api_key)
@@ -202,10 +212,10 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
             first=next(iter(rows),{})
             cache={'image':first.get('url'),'thumbnail':image(first.get('thumbnail')),
                    'artwork_language':language,
-                   'expires_at':(now+timedelta(days=30)).isoformat()}
+                   'fetched_at':now.isoformat(),'expires_at':artwork_expiry(_release(media), now).isoformat()}
         except ArtworkIdentityUnavailable:
             cache={'image':cache.get('image'),'thumbnail':cache.get('thumbnail'),
-                   'artwork_language':language,
+                   'artwork_language':language,'unmatched':True,
                    'expires_at':(now+timedelta(days=1)).isoformat()}
         except Exception as error:
             logger.warning('Artwork preview failed for media %s (%s)',media.id,type(error).__name__)
@@ -214,13 +224,13 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
             if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429:
                 from core.catalogue_providers import retry_after_seconds
                 delay=max(delay,retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
-            cache={**cache,'last_error':'unavailable','expires_at':(now+timedelta(seconds=delay)).isoformat()}
+            cache={**cache,'last_error':'unavailable','retry_after':(now+timedelta(seconds=delay)).isoformat()}
         await db.execute(update(Media).where(Media.id==media.id).values(
             tmdb_data=func.coalesce(Media.tmdb_data,literal({},type_=JSONB)).op('||')({'_anylist_artwork_preview':cache})))
         await db.commit();await db.refresh(media)
 
 
-def screen_images(media, details):
+def screen_images(media, details, *, allow_stale=False):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
     current_policy = cache.get('version') == IMAGE_POLICY_VERSION
     ready = current_policy and artwork_language_checked(cache, original_artwork_language(media), 'artwork')
@@ -233,7 +243,7 @@ def screen_images(media, details):
               'error': cache.get('last_error') if retry else None, 'retry_after': retry}
     primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
     background={**screen_backdrop(media),**screen_artwork_preview(media)}
-    if current_policy:
+    if current_policy or allow_stale or cache.get('last_error'):
         primary = image(cache.get('primary_poster')) or primary
         posters = unique_images([primary, *(cache.get('posters') or [])])
         artwork = unique_images(cache.get('artwork') or [])
@@ -260,15 +270,13 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
     now = datetime.now(timezone.utc)
     language = original_artwork_language(media)
     covered = cache.get('unavailable') or artwork_language_checked(cache, language, 'artwork')
-    fields = ['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION and covered else []
-    if cache.get('retry_version') == IMAGE_POLICY_VERSION:
-        fields.append('retry_after')
-    for field in fields:
-        try:
-            if datetime.fromisoformat(cache.get(field, '')) > now:
-                return
-        except (ValueError, TypeError):
-            pass
+    if cache.get('version') == IMAGE_POLICY_VERSION and covered:
+        expiry = cache_time(cache.get('expires_at')) if cache.get('unavailable') else saved_expiry(cache, _release(media), legacy_days=30)
+        if expiry and expiry > now:
+            return
+    retry = cache_time(cache.get('retry_after')) if cache.get('retry_version') == IMAGE_POLICY_VERSION else None
+    if retry and retry > now:
+        return
     from core import tmdb
     from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
     try:
@@ -294,7 +302,7 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         thumbnails={row['url']:image(row.get('thumbnail')) for row in candidates['artwork'] if row.get('thumbnail')}
         cache = {**selected, 'primary_poster': primary, 'thumbnails':thumbnails,
                  'artwork_language': language, 'version': IMAGE_POLICY_VERSION,
-                 'expires_at': (now + timedelta(days=30)).isoformat()}
+                 'fetched_at': now.isoformat(), 'expires_at': artwork_expiry(_release(media), now).isoformat()}
     except ArtworkIdentityUnavailable:
         # Keep usable images, and recheck the bridge tomorrow rather than
         # retrying a known missing match as though the provider were down.

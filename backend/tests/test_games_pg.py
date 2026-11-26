@@ -185,7 +185,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             work.attributes={**work.attributes,'steam_primary_app_id':'1578650'}
             values=game_artwork.candidates([asset()],'heroes')
             db.add(MetadataSnapshot(provider='steamgriddb',kind='game_art_heroes',external_id=f'v1:{game_artwork.VERSION}:1578650',
-                payload={'images':values},fetched_at=game_artwork.now()-timedelta(days=15),
+                payload={'images':values},fetched_at=game_artwork.now()-timedelta(days=800),
                 error_code='unavailable',expires_at=datetime(2020,1,1)))
             await db.commit()
             http=SimpleNamespace(request=AsyncMock(side_effect=ProviderError('unavailable')))
@@ -194,6 +194,31 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 again,_=await game_artwork.images(db,work,'heroes',http=http)
             self.assertEqual(rows,values);self.assertEqual(again,values)
             self.assertEqual(state['state'],'deferred');self.assertEqual(http.request.await_count,1)
+
+    async def test_steamgriddb_legacy_cache_uses_the_games_release_age(self):
+        from core import game_artwork
+        from test_game_artwork import asset
+        from types import SimpleNamespace
+
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.base)
+            work.attributes = {**work.attributes, 'release_date': '1998-11-08', 'steam_primary_app_id': '1578650'}
+            db.add(CatalogueIdentity(entity_id=work.id, namespace='steam.app', external_id='1578650', source='igdb'))
+            values = game_artwork.candidates([asset()], 'heroes')
+            db.add(MetadataSnapshot(provider='steamgriddb', kind='game_art_heroes',
+                external_id=f'v1:{game_artwork.VERSION}:1578650', payload={'images': values},
+                fetched_at=game_artwork.now()-timedelta(days=40), expires_at=game_artwork.now()-timedelta(days=26)))
+            await db.commit()
+            http = SimpleNamespace(request=AsyncMock())
+            with patch.object(game_artwork.settings, 'steamgriddb_api_key', 'fake'):
+                rows, state = await game_artwork.images(db, work, 'heroes', http=http)
+                self.assertEqual(game_artwork.background_status(work)['state'], 'ready')
+            self.assertEqual(rows, values)
+            self.assertEqual(state['state'], 'ready')
+            with patch.object(game_artwork.settings, 'steamgriddb_api_key', ''):
+                cached, _ = await game_artwork.images(db, work, 'heroes', http=http)
+                self.assertEqual(cached, values)
+            http.request.assert_not_awaited()
 
     async def test_game_artwork_routes_keep_posters_lazy_and_require_access(self):
         from core import game_artwork

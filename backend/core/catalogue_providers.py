@@ -311,6 +311,9 @@ IGDB_FIELDS = (
       'bundles.name,bundles.game_type.type,bundles.themes,bundles.external_games.uid,bundles.external_games.url,'
       'bundles.external_games.external_game_source.name'
 )
+IGDB_ARTWORK_FIELDS = ('cover', 'artworks', 'screenshots')
+IGDB_FIELDS_WITHOUT_ARTWORK = ','.join(field for field in IGDB_FIELDS.split(',')
+    if field.split('.', 1)[0] not in IGDB_ARTWORK_FIELDS)
 
 
 class CatalogueProviders:
@@ -535,7 +538,8 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None,primary_only=False):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None,primary_only=False,
+                     include_artwork=True):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -544,7 +548,8 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary,primary_only=primary_only), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary,
+                primary_only=primary_only,include_artwork=include_artwork), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -557,7 +562,8 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None,primary_only=False):
+    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None,primary_only=False,
+                      include_artwork=True):
         if provider == "igdb":
             from core.game_types import igdb_game_class
             from core.game_release_dates import VERSION as RELEASE_VERSION
@@ -566,9 +572,8 @@ class CatalogueProviders:
                 WORKS_BUNDLE_VERSION, edition_sources, verify_works_bundle, works_bundle_candidate,
             )
             from core.catalogue_normalize import entity
-            rows = await self.igdb(
-                "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
-            )
+            fields = IGDB_FIELDS if include_artwork else IGDB_FIELDS_WITHOUT_ARTWORK
+            rows = await self.igdb("games", f"fields {fields}; where id = {id}; limit 1;")
             if not rows:
                 raise ProviderError("not_found")
             raw = rows[0]

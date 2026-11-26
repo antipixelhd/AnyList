@@ -10,7 +10,7 @@ from types import SimpleNamespace
 CONTENT_FAILURES = frozenset({'content_unavailable', 'not_found', 'identity_conflict'})
 VERSION = 1
 DEMAND_WINDOW = timedelta(days=7)
-OPERATIONAL_COVERAGE = frozenset({'requested_at','same_failure_count','retry_policy_version','retry_mode','retry_steam_app_id','release_watch'})
+OPERATIONAL_COVERAGE = frozenset({'requested_at','same_failure_count','retry_policy_version','retry_mode','retry_steam_app_id','release_watch','artwork_fetched_at'})
 
 
 def public_coverage(coverage):
