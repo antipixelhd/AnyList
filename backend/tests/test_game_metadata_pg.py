@@ -11,7 +11,7 @@ import test_games_pg as fixture
 from core.game_metadata import GameMetadata,_flights,header,status,request,IDENTITY_JOB
 from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.game_imdb_enrichment import now
-from core.catalogue_providers import ProviderError,CatalogueProviders
+from core.catalogue_providers import IGDB_ARTWORK_FIELDS,ProviderError,CatalogueProviders
 from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot,CharacterAppearance
 from models.games import GameEntry
@@ -37,7 +37,7 @@ class Provider:
     def __init__(self):
         self.called=0;self.characters=asyncio.Event();self.release=asyncio.Event();self.fail=None;self.wrong=False;self.fail_characters=False;self.title='Hydrated game';self.optional_active=0;self.optional_max=0
         self.dates={}
-    async def detail(self,provider,kind,native,*,on_primary=None):
+    async def detail(self,provider,kind,native,*,on_primary=None,include_artwork=True):
         self.called+=1
         if self.fail:raise self.fail
         raw={'id':1942 if self.wrong else int(native),'name':self.title,'slug':'hydrated-game','summary':'Full primary synopsis',
@@ -46,6 +46,9 @@ class Provider:
             '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
                 'release_precision_version':RELEASE_VERSION,'release_dates':'provider_projection','artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
         raw.update(self.dates)
+        if not include_artwork:
+            for field in IGDB_ARTWORK_FIELDS:
+                raw.pop(field, None)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)
         self.characters.set()
