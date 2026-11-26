@@ -27,29 +27,36 @@ if (kind === 'actor' && !params.has('role')) params.set('role', 'actor');
 if (!isPerson) params.delete('role');
 const domains = await viewerMediaPreferences(Astro.locals);
 if (!hasMediaChoice && !domains.show_movies_series && domains.show_games) params.set('media_type','game');
-const games = params.get('media_type') === 'game';
-const showMovies = domains.show_movies_series || !games;
-const showGames = domains.show_games || games;
 const view = Astro.url.searchParams.get('view') === 'grid' ? 'grid' : 'timeline';
 const endpoint = `contributors/${isPerson ? 'person' : 'studio'}/${encodeURIComponent(key || '')}`;
+const loadPage=(query:URLSearchParams)=>{
+  const initialParams=new URLSearchParams(query);
+  initialParams.set('include_tab_snapshot','true');
+  return tracker<ContributorPage>(`${endpoint}?${initialParams}`,Astro.locals.token);
+};
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 let data: ContributorPage | null = null, error = '';
 try {
   if (!key) throw new Error('Not found.');
-  const initialParams=new URLSearchParams(params);
-  initialParams.set('include_tab_snapshot','true');
-  data = await tracker(`${endpoint}?${initialParams}`, Astro.locals.token);
+  data = await loadPage(params);
 } catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load this page.'; Astro.response.status = error === 'Not found.' ? 404 : 503; }
-if (data && !hasMediaChoice && !games && domains.show_games && !data.works.length &&
+if (data && !hasMediaChoice && params.get('media_type')!=='game' && domains.show_games && !data.works.length &&
     !params.has('cursor') && !params.has('page') && !params.has('source')) {
   const gameRole=data.kind==='studio'?undefined:defaultContributorGameRole(data.tab_roles,data.kind,!!explicitRole);
   if (data.kind==='studio'?defaultsToContributorGames(data.tab_domains):gameRole) {
-    const url=new URL(Astro.url);
-    url.searchParams.set('media_type','game');
-    if(gameRole&&gameRole!==data.kind)url.searchParams.set('role',gameRole);
-    return Astro.redirect(url.pathname+url.search);
+    const gameParams=new URLSearchParams(params);
+    gameParams.set('media_type','game');
+    if(gameRole)gameParams.set('role',gameRole);
+    const gamePage=await loadPage(gameParams).catch(()=>null);
+    if(gamePage?.known_works){
+      data=gamePage;
+      params.set('media_type','game');
+    }
   }
 }
+const games = params.get('media_type') === 'game';
+const showMovies = domains.show_movies_series || !games;
+const showGames = domains.show_games || games;
 if (isPerson && data && data.kind !== 'studio') params.set('role', data.kind);
 const media=params.get('media_type')||'all',hasWorks=!!data?.works.length;
 const switches=data&&data.kind!=='studio'?personSwitchVisibility(data.tab_roles,data.kind,media,hasWorks)
