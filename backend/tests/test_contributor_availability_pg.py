@@ -183,6 +183,8 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(response.json()['retry_after'],60)
         self.assertEqual(response.json()['roles']['actor']['game'],'unavailable')
         self.assertEqual(response.json()['roles']['staff']['game'],'available')
+        self.assertEqual(response.json()['roles']['actor']['movie'],'unavailable')
+        self.assertEqual(response.json()['roles']['staff']['series'],'unavailable')
         async with self.Session() as db:
             jobs={job.kind:job for job in await db.scalars(select(MetadataSnapshot))}
             self.assertEqual(jobs[JOB].error_code,'forbidden')
@@ -261,20 +263,18 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
              patch('core.tmdb.discover_shows',AsyncMock(return_value={'results':[],'total_results':0})):
             await evidence.run_batch(self.Session)
         result=(await self.read(entity,'studio')).json()
-        self.assertEqual(result['domains'],{'movie':'empty','series':'empty','game':'unknown'})
+        self.assertEqual(result['domains'],{'movie':'empty','series':'empty','game':'unavailable'})
         self.assertFalse(result['pending'])
         self.viewer.games_access=False
         screen=await self.read(entity,'studio')
         self.assertEqual(screen.status_code,200,screen.text)
-        self.assertEqual(screen.json()['domains'],result['domains'])
+        self.assertEqual(screen.json()['domains'],{**result['domains'],'game':'unknown'})
         async with self.Session() as db:
             snapshot=await saved_studio_tabs(db,f'catalogue:{entity}',include_games=False)
-            self.assertEqual(snapshot,result['domains'])
+            self.assertEqual(snapshot,screen.json()['domains'])
 
-        page={'kind':'studio','key':f'catalogue:{entity}','name':'Verified company',
-              'works':[],'known_works':0,'page':1,'has_more':False}
-        with patch('core.contributor_details.contributor_page',AsyncMock(return_value=page)):
-            response=await self.client.get(f'/tracking/contributors/studio/catalogue:{entity}?include_tab_snapshot=true')
+        with patch('core.tmdb.get_company',AsyncMock(return_value={'id':888,'name':'Verified company'})):
+            response=await self.client.get(f'/tracking/contributors/studio/catalogue:{entity}?include_tab_snapshot=true&source=local')
             self.assertEqual(response.status_code,200,response.text)
             self.assertEqual(response.json()['tab_domains'],snapshot)
         self.viewer=None
@@ -283,3 +283,47 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.tracking_access.get_global_settings',AsyncMock(return_value=None)):
             denied=await self.read(entity,'studio')
         self.assertEqual(denied.status_code,401)
+
+    async def test_unlinked_company_uses_local_screen_credits_on_first_render(self):
+        self.app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
+        async with self.Session() as db:
+            company=CatalogueEntity(kind='organization',name='Games studio')
+            game=CatalogueEntity(kind='game',name='Stored game',attributes={'game_class':'game'})
+            db.add_all([company,game]);await db.flush()
+            db.add(CatalogueCredit(work_id=game.id,contributor_id=company.id,provider='igdb',source_key='game',
+                role='developer'))
+            await db.commit()
+        path=f'/tracking/contributors/studio/catalogue:{company.id}'
+        states={'movie':'unavailable','series':'unavailable','game':'available'}
+        for media in ('all','game'):
+            response=await self.client.get(f'{path}?media_type={media}&include_tab_snapshot=true')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['tab_domains'],states)
+        self.assertEqual((await self.client.get(f'{path}/availability')).json()['domains'],states)
+
+        async with self.Session() as db:
+            film=CatalogueEntity(kind='movie',name='Stored movie')
+            db.add(film);await db.flush()
+            db.add(CatalogueCredit(work_id=film.id,contributor_id=company.id,provider='wikidata',source_key='movie',
+                role='producer'))
+            await db.commit()
+        response=await self.client.get(f'{path}?media_type=game&include_tab_snapshot=true')
+        self.assertEqual(response.json()['tab_domains'],{**states,'movie':'available'})
+
+    async def test_tmdb_only_person_uses_local_games_when_imdb_is_unlinked(self):
+        self.app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
+        entity=await self.person(imdb=False)
+        path=f'/tracking/contributors/person/catalogue:{entity}'
+        profile={'id':777,'name':'Availability person','combined_credits':{'cast':[],'crew':[]}}
+        with patch('core.tmdb.get_person',AsyncMock(return_value=profile)):
+            response=await self.client.get(f'{path}?include_tab_snapshot=true')
+            self.assertEqual(response.json()['tab_roles']['actor']['game'],'unavailable')
+            self.assertEqual((await self.client.get(f'{path}/availability')).json()['roles']['actor']['game'],'unavailable')
+            async with self.Session() as db:
+                game=CatalogueEntity(kind='game',name='Stored game',attributes={'game_class':'game'})
+                db.add(game);await db.flush()
+                db.add(CatalogueCredit(work_id=game.id,contributor_id=entity,provider='igdb',source_key='cast',
+                    role='actor'))
+                await db.commit()
+            response=await self.client.get(f'{path}?include_tab_snapshot=true')
+            self.assertEqual(response.json()['tab_roles']['actor']['game'],'available')

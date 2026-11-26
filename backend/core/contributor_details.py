@@ -345,7 +345,7 @@ async def resolve_contributor(db, kind, key, *, include_identities=False):
     return (entity,native,identities) if include_identities else (entity,native)
 
 
-async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False, role=None):
+async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False, role=None, include_tab_snapshot=False):
     from core.game_access import allowed, require
     if media_type == 'game':
         require(viewer)
@@ -364,11 +364,13 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         elif kind != 'studio' or source == 'local':
             raise ValueError('Invalid timeline cursor')
     local = [] if games else await known_works(db, entity, native, kind, viewer)
+    game_backed_studio=False
     if not games and entity and not native and not local and not allowed(viewer):
         return None
     if not games and kind == 'studio' and entity and not native and not local:
         from core.game_contributor_works import game_credits
-        if not await db.scalar(select(select(game_credits(entity.id, kind).c.id).exists())):
+        game_backed_studio=bool(await db.scalar(select(select(game_credits(entity.id, kind).c.id).exists())))
+        if not game_backed_studio:
             return None  # A broadcaster-only organization is not a production studio.
     attrs = dict(entity.attributes or {}) if entity else {}
     imdb_state=None
@@ -417,8 +419,11 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         from core.person_identities import verified_tmdb_person
         from core.catalogue import IdentityConflict
         # Reuse the already requested profile's explicit external identifier.
-        if not entity or (not entity.image_url and profile.get('profile_path') and 'image_url' not in (entity.protected_fields or [])) or not any(
-            row.namespace=='imdb.person' and row.external_id==profile.get('imdb_id') for row in identities):
+        imdb_id=profile.get('imdb_id')
+        # Reuse the explicit ID from the cached profile when available. A
+        # profile with no IMDb ID has no new binding to attempt.
+        if imdb_id and (not entity or (not entity.image_url and profile.get('profile_path') and 'image_url' not in (entity.protected_fields or [])) or not any(
+            row.namespace=='imdb.person' and row.external_id==imdb_id for row in identities)):
             try:
                 linked=await verified_tmdb_person(db,native,profile)
                 if linked:
@@ -594,7 +599,20 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         banner = profile_image if not re.search(r'\.jpe?g(?:[?#]|$)', profile_image or '', re.I) else None
     from core.studio_names import studio_name
     name = studio_display_name(native, studio_name(name)) if kind == 'studio' else name
-    return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
+    resolved_key=f'catalogue:{entity.id}' if entity else key
+    tabs={}
+    if include_tab_snapshot and (unified or kind=='studio'):
+        from core.contributor_availability import contributor_tab_snapshot
+        game_roles=set()
+        include_games=allowed(viewer)
+        if include_games:
+            if game_backed_studio or game_result and game_result['known_works']:
+                game_roles.add(kind)
+            if unified and not native:
+                game_roles.update(mode for mode,count in game_counts.items() if count)
+        tabs=await contributor_tab_snapshot(db,'person' if unified else kind,resolved_key,entity,native,identities,
+            include_games=include_games,game_roles=game_roles)
+    return {"kind": kind, "key": resolved_key, "name": name, **tabs,
         **({'role_options': role_options, 'primary_label': primary_label} if unified else {}),
         "banner": banner,
         "image": profile_image,

@@ -13,7 +13,7 @@ from core.game_contributor_works import game_credits
 from core.statistics_staff import ACTING
 from core.studio_groups import studio_companies, studio_root, studio_members, studio_entity_ids
 from models import Media
-from models.catalogue import ContributorEvidence, CatalogueEntity, CatalogueCredit, MetadataSnapshot
+from models.catalogue import ContributorEvidence, CatalogueEntity, CatalogueCredit, CatalogueIdentity, MetadataSnapshot
 from models.title_credits import TitleCredits
 
 TAB_SNAPSHOT='person_tab_availability'
@@ -46,6 +46,62 @@ def studio_tab_key(key):
 async def saved_studio_tabs(db,key,*,include_games):
     states=await saved_tabs(db,STUDIO_TAB_SNAPSHOT,studio_tab_key(key),('studio',),include_games=include_games)
     return states['studio'] if states else None
+
+
+async def unlinked_screen_domains(db,entity_id,kind):
+    """Without a TMDB link, only catalogue credits can supply screen works."""
+    modes=('studio',) if kind=='studio' else PERSON_ROLES
+    aliases=studio_entity_ids(None,entity_id) if kind=='studio' else select(CatalogueEntity.id).where(
+        or_(CatalogueEntity.id==entity_id,CatalogueEntity.canonical_person_id==entity_id)).correlate(None)
+    credit=CatalogueCredit
+    label=func.coalesce(func.nullif(credit.role_label,''),func.replace(credit.role,'_',' '))
+    acting=or_(credit.role=='actor',func.lower(label).in_(ACTING))
+    rules={'studio':credit.role=='producer','actor':acting,'staff':~acting}
+    works=select(credit.id).join(CatalogueEntity,CatalogueEntity.id==credit.work_id).where(
+        credit.contributor_id.in_(aliases))
+    domains=('movie','series')
+    columns=[works.where(CatalogueEntity.kind==media,rules[mode]).exists().label(f'{mode}.{media}')
+        for mode in modes for media in domains]
+    found=(await db.execute(select(*columns))).mappings().one()
+    return {mode:{media:'available' if found[f'{mode}.{media}'] else 'unavailable'
+        for media in domains} for mode in modes}
+
+
+async def has_game_source(db,kind,entity,identities):
+    namespace='igdb.company' if kind=='studio' else 'imdb.person'
+    if any(identity.namespace==namespace for identity in identities):return True
+    if kind!='studio' or not entity:return False
+    # A canonical company can serve Games through an IGDB-linked alias.
+    return bool(await db.scalar(select(select(CatalogueIdentity.entity_id).join(
+        CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(
+        CatalogueIdentity.namespace==namespace,CatalogueEntity.canonical_company_id==entity.id).exists())))
+
+
+async def stored_game_modes(db,entity_id,modes):
+    return {mode for mode in modes if await db.scalar(select(select(game_credits(entity_id,mode).c.id).exists()))}
+
+
+async def contributor_tab_snapshot(db,kind,key,entity,native,identities,*,include_games,game_roles=()):
+    modes=('studio',) if kind=='studio' else PERSON_ROLES
+    if kind=='studio':
+        saved=await saved_studio_tabs(db,key,include_games=include_games)
+        states={'studio':saved} if saved else {}
+    else:
+        states=(await saved_person_tabs(db,entity.id,include_games=include_games) or {}) if entity else {}
+    if entity and not native:
+        local=await unlinked_screen_domains(db,entity.id,kind)
+        states={mode:{**domains,'game':states.get(mode,{}).get('game','unknown')} for mode,domains in local.items()}
+    if include_games:
+        linked=await has_game_source(db,kind,entity,identities)
+        if not linked and entity:
+            game_roles=set(game_roles)|await stored_game_modes(db,entity.id,[mode for mode in modes if mode not in game_roles])
+        if game_roles or not linked:
+            if not states:states={mode:dict.fromkeys(DOMAINS,'unknown') for mode in modes}
+            for mode in modes:
+                if mode in game_roles:states[mode]['game']='available'
+                elif not linked:states[mode]['game']='unavailable'
+    if not states:return {}
+    return {'tab_domains':states['studio']} if kind=='studio' else {'tab_roles':states}
 
 
 async def save_tabs(db,kind,key,entity_id,states,*,include_games):
@@ -164,23 +220,26 @@ async def availability(db,viewer,*,kind,key):
     entity,native,identities=resolved
     kinds=PERSON_ROLES if kind=='person' else (kind,)
     states,pending,retry=await movie_domains(db,viewer,kind,native,kinds)
+    local_screen=await unlinked_screen_domains(db,entity.id,kind) if kind in ('person','studio') and entity and not native else {}
     for mode in kinds:
-        states[mode]=await preserve_local_movies(db,states[mode],entity,native,mode)
+        if mode in local_screen:states[mode]=local_screen[mode]
+        else:states[mode]=await preserve_local_movies(db,states[mode],entity,native,mode)
         states[mode]['game']='unknown'
     delays=[retry] if pending else []
     game_pending=False;source=None
     include_games=allowed(viewer)
+    unified=kind in ('person','studio')
+    game_linked=await has_game_source(db,kind,entity,identities) if include_games and unified else True
     if entity and include_games:
-        for mode in kinds:
-            if await db.scalar(select(select(game_credits(entity.id,mode).c.id).exists())):
-                states[mode]['game']='available'
-        if kind=='studio':
+        for mode in await stored_game_modes(db,entity.id,kinds):
+            states[mode]['game']='available'
+        if kind=='studio' and game_linked:
             from core.game_company_works import status
             source=await status(db,entity.id,enqueue=True)
             game_pending=bool(source and source['pending'])
             if states[kind]['game']=='unknown' and source and source['complete'] and source['coverage']=='complete':
                 states[kind]['game']='empty'
-        else:
+        elif kind!='studio' and game_linked:
             from core.game_imdb_person import request,view,queue_projection
             admitted=await request(db,entity.id)
             if admitted:
@@ -217,13 +276,21 @@ async def availability(db,viewer,*,kind,key):
                             # The display projection has no eligible credits,
                             # and the live source cannot confirm the career.
                             states[mode]['game']='unavailable'
+    if not game_linked:
+        for mode in kinds:
+            if states[mode]['game']=='unknown':states[mode]['game']='unavailable'
     if game_pending:delays.append(max(3,min(60,(source or {}).get('retry_after',3))))
     resolved_key=f'catalogue:{entity.id}' if entity else key
+    # Unlinked screen capability is evaluated live on SSR and here. Don't keep
+    # those local observations once the contributor gets a provider identity.
+    saved={mode:{domain:value for domain,value in domains.items()
+        if (domain=='game' and (game_linked or value=='available')) or (domain!='game' and not local_screen)}
+        for mode,domains in states.items()}
     if kind=='person' and entity:
-        await save_tabs(db,TAB_SNAPSHOT,str(entity.id),entity.id,states,include_games=include_games)
+        await save_tabs(db,TAB_SNAPSHOT,str(entity.id),entity.id,saved,include_games=include_games)
     elif kind=='studio':
         await save_tabs(db,STUDIO_TAB_SNAPSHOT,studio_tab_key(resolved_key),entity.id if entity else None,
-            states,include_games=include_games)
+            saved,include_games=include_games)
     await db.commit()
     return {'key':resolved_key,
         **({'roles':states} if kind=='person' else {'domains':states[kind]}),

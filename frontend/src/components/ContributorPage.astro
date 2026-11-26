@@ -11,7 +11,7 @@ import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {contributorBanner} from '../lib/contributor-banner';
-import {contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,personSwitchVisibility,unavailableChoice} from '../lib/contributor-availability';
+import {contributorMediaOptionDisabled,contributorMediaSwitchVisibility,defaultContributorGameRole,defaultsToContributorGames,disabledContributorRoleOption,personSwitchVisibility} from '../lib/contributor-availability';
 import '../styles/browse.css';
 import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
@@ -21,10 +21,12 @@ const key = metadataKey(Astro.params.id);
 const signedIn = !!Astro.locals.user;
 const params = contributorParams(Astro.url.searchParams, signedIn);
 const isPerson = kind !== 'studio';
+const hasMediaChoice=params.has('media_type')||Astro.url.searchParams.get('domain')==='movies-series';
+const explicitRole=params.get('role');
 if (kind === 'actor' && !params.has('role')) params.set('role', 'actor');
 if (!isPerson) params.delete('role');
 const domains = await viewerMediaPreferences(Astro.locals);
-if (!Astro.url.searchParams.has('media_type') && !domains.show_movies_series && domains.show_games) params.set('media_type','game');
+if (!hasMediaChoice && !domains.show_movies_series && domains.show_games) params.set('media_type','game');
 const games = params.get('media_type') === 'game';
 const showMovies = domains.show_movies_series || !games;
 const showGames = domains.show_games || games;
@@ -38,15 +40,23 @@ try {
   initialParams.set('include_tab_snapshot','true');
   data = await tracker(`${endpoint}?${initialParams}`, Astro.locals.token);
 } catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load this page.'; Astro.response.status = error === 'Not found.' ? 404 : 503; }
+if (data && !hasMediaChoice && !games && domains.show_games && !data.works.length &&
+    !params.has('cursor') && !params.has('page') && !params.has('source')) {
+  const gameRole=data.kind==='studio'?undefined:defaultContributorGameRole(data.tab_roles,data.kind,!!explicitRole);
+  if (data.kind==='studio'?defaultsToContributorGames(data.tab_domains):gameRole) {
+    const url=new URL(Astro.url);
+    url.searchParams.set('media_type','game');
+    if(gameRole&&gameRole!==data.kind)url.searchParams.set('role',gameRole);
+    return Astro.redirect(url.pathname+url.search);
+  }
+}
 if (isPerson && data && data.kind !== 'studio') params.set('role', data.kind);
 const media=params.get('media_type')||'all',hasWorks=!!data?.works.length;
 const switches=data&&data.kind!=='studio'?personSwitchVisibility(data.tab_roles,data.kind,media,hasWorks)
   :{role:false,...contributorMediaSwitchVisibility(data?.tab_domains,media,hasWorks)};
 const initialDisabled=(name:string,value:string)=>{
-  if(name==='role'){
-    const role=data?.tab_roles?.[value==='staff'?'staff':'actor'];
-    return !!role&&!(hasWorks&&value===data?.kind)&&unavailableChoice(contributorRoleState(role,media));
-  }
+  if(name==='role'&&data&&data.kind!=='studio')
+    return disabledContributorRoleOption(data.tab_roles,data.kind,value==='staff'?'staff':'actor',media,hasWorks);
   const states=data?.kind==='studio'?data.tab_domains:data?.kind?data.tab_roles?.[data.kind]:undefined;
   return contributorMediaOptionDisabled(name,value,media,hasWorks,states);
 };

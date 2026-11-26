@@ -1103,7 +1103,8 @@ async def contributor_details(
     try:
         result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
                                         media_type=media_type, list_scope=list_scope, status=status,
-                                        page=page, cursor=cursor, source=source, role=role)
+                                        page=page, cursor=cursor, source=source, role=role,
+                                        include_tab_snapshot=include_tab_snapshot)
     except GameWorksChanged:
         raise HTTPException(409, 'Game works changed. Refresh the works to continue.') from None
     except ValueError:
@@ -1112,13 +1113,6 @@ async def contributor_details(
         raise HTTPException(502, 'Unable to load more works. Try again.') from None
     if result is None:
         raise HTTPException(404, 'Contributor not found')
-    if include_tab_snapshot and kind in ('person','studio'):
-        from core.contributor_availability import saved_person_tabs, saved_studio_tabs
-        from core.game_access import allowed
-        if kind=='studio':
-            result['tab_domains']=await saved_studio_tabs(db,result['key'],include_games=allowed(viewer))
-        elif result['key'].startswith('catalogue:'):
-            result['tab_roles']=await saved_person_tabs(db,int(result['key'].split(':')[1]),include_games=allowed(viewer))
     return ContributorPage.model_validate(result)
 
 

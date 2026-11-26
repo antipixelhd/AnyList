@@ -14,7 +14,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
-import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,disabledContributorOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility,unavailableChoice,type ContributorAvailability} from './contributor-availability';
+import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,disabledContributorOption,disabledContributorRoleOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility,type ContributorAvailability} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
@@ -110,9 +110,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     for(const input of form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]')){
       input.disabled=contributorMediaOptionDisabled(input.name,input.value,media,hasWorks,domains);
     }
-    for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
-      const role=availability.roles?.[input.value==='staff'?'staff':'actor'];
-      input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&unavailableChoice(contributorRoleState(role,media));
+    if(data.kind!=='studio')for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
+      input.disabled=disabledContributorRoleOption(availability.roles,data.kind,input.value==='staff'?'staff':'actor',media,hasWorks);
     }
     let visible={domain:true,screen:true};
     if(data.kind==='studio'){

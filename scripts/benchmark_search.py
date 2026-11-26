@@ -1276,7 +1276,7 @@ async def main(args):
                             return result
                         if label in ('game_company_availability','game_person_availability','person_tab_availability'):
                             result=await request(path,params)
-                            expected={'movie':'unknown','series':'unknown','game':'available'} if label=='game_company_availability' else {'movie':'available','series':'empty','game':'available'}
+                            expected={'movie':'unavailable','series':'unavailable','game':'available'} if label=='game_company_availability' else {'movie':'available','series':'empty','game':'available'}
                             if label=='person_tab_availability':
                                 states=result['roles']
                                 expected={'actor':expected,'staff':dict.fromkeys(('movie','series','game'),'empty')}
@@ -1292,7 +1292,7 @@ async def main(args):
                             return result
                         if label=='game_company_cached':
                             result=await request(path,params)
-                            if result.get('tab_domains')!={'movie':'unknown','series':'unknown','game':'available'}:
+                            if result.get('tab_domains')!={'movie':'unavailable','series':'unavailable','game':'available'}:
                                 raise RuntimeError('Cached company lost its server-rendered media choices')
                             if result['known_works']!=args.local_titles or len(result['works'])!=min(24,args.local_titles):
                                 raise RuntimeError('Company portfolio lost its full works or bounded page')

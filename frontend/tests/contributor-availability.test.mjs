@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,disabledContributorOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility} from '../src/lib/contributor-availability.ts';
+import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,defaultContributorGameRole,defaultsToContributorGames,disabledContributorOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility} from '../src/lib/contributor-availability.ts';
 
 test('only verified empty options disable; merged movies/series needs both negatives',()=>{
   for(const movie of ['unknown','available','empty'])for(const series of ['unknown','available','empty']){
@@ -67,6 +67,24 @@ test('studios use saved media evidence without collapsing the layout mid-visit',
   const updated=mergeContributorDomains(verified,rechecking);
   assert.deepEqual(contributorMediaSwitchVisibility(updated,'all',true,verified),{domain:true,screen:false});
   assert.equal(contributorMediaOptionDisabled('media_type','series','series',true,verified),false);
+});
+
+test('contributors with games and no reachable screen credits drop the redundant switches',()=>{
+  const games={movie:'unavailable',series:'unavailable',game:'available'};
+  const empty={...games,game:'unavailable'};
+  assert.equal(defaultsToContributorGames(games),true);
+  assert.deepEqual(contributorMediaSwitchVisibility(games,'game',true),{domain:false,screen:false});
+  assert.deepEqual(contributorMediaSwitchVisibility(games,'all',false),{domain:true,screen:false});
+  assert.deepEqual(personSwitchVisibility({actor:games,staff:empty},'actor','all',false),
+    {role:false,domain:true,screen:false});
+  assert.deepEqual(personSwitchVisibility({actor:games,staff:empty},'actor','game',true),
+    {role:false,domain:false,screen:false});
+  assert.equal(defaultContributorGameRole({actor:games,staff:empty},'actor',false),'actor');
+  assert.equal(defaultContributorGameRole({actor:empty,staff:games},'actor',true),undefined);
+  assert.equal(defaultContributorGameRole({actor:empty,staff:games},'actor',false),'staff');
+  const linked=mergeContributorDomains(games,{movie:'unknown',series:'unknown',game:'available'});
+  assert.equal(defaultsToContributorGames(linked),false);
+  assert.equal(contributorMediaSwitchVisibility(linked,'game',true,games).domain,true);
 });
 
 async function fixture(run){

@@ -7,9 +7,7 @@ export interface ContributorAvailability {
 }
 
 export function disabledContributorOption(name:string,value:string,domains:Domains):boolean {
-  if(name==='domain')return value==='game'?unavailableChoice(domains.game):domains.movie==='empty'&&domains.series==='empty';
-  return value==='all'?domains.movie==='empty'&&domains.series==='empty'
-    :value==='movie'||value==='series'?domains[value]==='empty':false;
+  return unavailableChoice(contributorRoleState(domains,name==='domain'&&value==='movies-series'?'all':value));
 }
 
 export function contributorMediaOptionDisabled(name:string,value:string,media:string,hasWorks:boolean,domains?:Domains):boolean {
@@ -27,12 +25,31 @@ export const unavailableChoice=(state:DomainState)=>state==='empty'||state==='un
 export function contributorRoleState(domains:Domains, media:string):DomainState {
   if(media==='movie'||media==='series'||media==='game')return domains[media];
   if(domains.movie==='available'||domains.series==='available')return 'available';
-  return domains.movie==='empty'&&domains.series==='empty'?'empty':'unknown';
+  if(domains.movie==='empty'&&domains.series==='empty')return 'empty';
+  return unavailableChoice(domains.movie)&&unavailableChoice(domains.series)?'unavailable':'unknown';
+}
+
+export function defaultsToContributorGames(domains?:Domains):boolean {
+  return !!domains&&domains.game==='available'&&unavailableChoice(contributorRoleState(domains,'all'));
+}
+
+export function defaultContributorGameRole(roles:PersonTabRoles|undefined,role:PersonRole,explicit:boolean) {
+  if(!roles)return;
+  if(!explicit&&personRoles.some(mode=>!unavailableChoice(contributorRoleState(roles[mode],'all'))))return;
+  if(defaultsToContributorGames(roles[role]))return role;
+  if(!explicit)return personRoles.find(mode=>defaultsToContributorGames(roles[mode]));
+}
+
+export function disabledContributorRoleOption(roles:PersonTabRoles|undefined,role:PersonRole,choice:PersonRole,media:string,hasWorks:boolean) {
+  if(!roles||hasWorks&&choice===role)return false;
+  // An explicit empty screen view can still reach Games through the other role.
+  if(media!=='game'&&choice!==role&&defaultContributorGameRole(roles,role,false)===choice)return false;
+  return unavailableChoice(contributorRoleState(roles[choice],media));
 }
 
 export function mergeContributorDomains(previous:Domains|undefined,next:Domains):Domains {
   const updated={...next};
-  for(const name of domainNames)if(updated[name]==='unknown'&&previous)updated[name]=previous[name];
+  for(const name of domainNames)if(updated[name]==='unknown'&&previous&&previous[name]!=='unavailable')updated[name]=previous[name];
   return updated;
 }
 
@@ -52,10 +69,12 @@ export function contributorMediaSwitchVisibility(domains:Domains|undefined,media
   if(!domains||!saved)return {domain:true,screen:true};
   const own=layoutDomains(domains,saved),games=media==='game';
   const screen=contributorRoleState(own,'all'),ownDomain=games?own.game:screen;
-  const singleScreen=(own.movie==='available'&&own.series==='empty')||(own.series==='available'&&own.movie==='empty');
+  const alternate=games?screen:own.game;
+  const singleScreen=(own.movie==='available'&&unavailableChoice(own.series))||(own.series==='available'&&unavailableChoice(own.movie));
   return {
-    domain: !((hasWorks||ownDomain==='available')&&unavailableChoice(games?screen:own.game)),
-    screen: !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
+    domain: !(alternate==='unavailable'||((hasWorks||ownDomain!=='unknown')&&alternate==='empty')),
+    screen: ((!games&&hasWorks)||!unavailableChoice(screen))&&
+      !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
   };
 }
 
@@ -63,11 +82,14 @@ export function personSwitchVisibility(roles:PersonTabRoles|undefined,role:Perso
   saved:PersonTabRoles|undefined=roles) {
   if(!roles||!saved)return {role:true,domain:true,screen:true};
   const otherRole=role==='actor'?'staff':'actor';
-  const ownDomain=contributorRoleState(layoutDomains(roles[role],saved[role]),media==='game'?'game':'all');
+  const own=layoutDomains(roles[role],saved[role]);
+  const ownDomain=contributorRoleState(own,media==='game'?'game':'all');
   const other=layoutDomains(roles[otherRole],saved[otherRole]);
   const hasOtherCredits=Object.values(roles[otherRole]).includes('available');
   return {
-    role: hasOtherCredits||!((hasWorks||ownDomain==='available')&&unavailableChoice(contributorRoleState(other,media))),
+    role: (media==='game'||hasWorks||!unavailableChoice(contributorRoleState(own,'all'))||
+      !unavailableChoice(contributorRoleState(other,'all'))||own.game!=='available'&&other.game==='available')&&
+      (hasOtherCredits||!((hasWorks||ownDomain==='available')&&unavailableChoice(contributorRoleState(other,media)))),
     ...contributorMediaSwitchVisibility(roles[role],media,hasWorks,saved[role]),
   };
 }
