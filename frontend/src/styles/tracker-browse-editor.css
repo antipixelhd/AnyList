@@ -584,13 +584,17 @@ body:has(#tracking-editor[open]) {
 .editor .editor-fields:has(>.game-playtime:not([hidden])) {
   gap:16px 24px;
 }
+.editor .game-steam-sync[hidden] {
+  display:inline-flex!important;
+  visibility:hidden;
+}
 .editor-fields:has(>.game-playtime:not([hidden])) > * {
   min-width:0;
 }
 .editor-fields:has(>.game-playtime:not([hidden])) > * > :is(.editor-field-heading,.editor-field-label) {
   display:flex;
   align-items:center;
-  min-height:20px;
+  min-height:24px;
   gap:6px;
 }
 .editor .editor-fields:has(>.game-playtime:not([hidden])) > .editor-notes {
@@ -598,15 +602,20 @@ body:has(#tracking-editor[open]) {
 }
 .editor .editor-fields:has(>.game-playtime:not([hidden])) .editor-notes textarea {
   display:block;
-  min-height:46px;
-  height:46px;
+  min-height:42px;
+  height:42px;
+}
+.editor .editor-fields:has(>.game-playtime:not([hidden])) [data-date-display] {
+  display:block;
 }
 @media(min-width:651px) {
   .editor .editor-fields:has(>.game-playtime:not([hidden])) {
     grid-template-columns:repeat(3,minmax(0,1fr));
   }
-  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-start-date { grid-area:1 / 3; }
-  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-finish-date { grid-area:2 / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .game-playtime { grid-area:1 / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .game-first-completion { grid-area:2 / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-start-date { grid-area:2 / 1; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-finish-date { grid-area:2 / 2; }
   .editor-fields:has(>.game-playtime:not([hidden])) > .editor-notes { grid-area:3 / 1 / auto / 3; }
   .editor-fields:has(>.game-playtime:not([hidden])) > .game-replays { grid-area:3 / 3; }
 }
@@ -619,17 +628,33 @@ body:has(#tracking-editor[open]) {
     grid-column:1!important;
   }
 }
+@media(max-width:360px) {
+  .editor .game-playtime .editor-field-heading {
+    position:relative;
+  }
+  .editor .game-playtime .game-steam-sync {
+    position:absolute;
+    z-index:1;
+    inset-block-start:calc(100% + 15px);
+    inset-inline-end:26px;
+  }
+  .editor .game-playtime .score-stepper input {
+    padding-inline-end:48px;
+  }
+}
 .editor[data-editor-domain=game] .editor-actions {
   display:grid;
   grid-template-columns:minmax(0,1fr) auto;
   gap:0 12px;
   align-items:center;
 }
-.editor[data-editor-domain=game] .editor-actions:has(>.game-achievement-editor:not([hidden])) {
-  border-block-start:1px solid var(--border);
-}
 .editor[data-editor-domain=game] .editor-actions:not(:has(>:not([hidden]))) {
   display:none;
+}
+/* Catalogue and Steam controls can arrive after the dialog is already open. */
+.editor[data-editor-domain=game]:has(.game-playtime:not([hidden])) .editor-actions {
+  display:grid;
+  grid-template-rows:minmax(44px,auto);
 }
 .editor[data-editor-domain=game] .editor-delete-button {
   grid-area:1 / 2;

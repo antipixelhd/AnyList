@@ -28,15 +28,15 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
       <div class="editor-status-field"><div class="editor-field-heading"><span class="editor-field-label" id="editor-status-label">Status</span><button type="button" class="editor-category-info" data-game-category-info data-game-only hidden aria-label="Game category meanings"><Icon name="info"/></button></div><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><div class="editor-field-heading"><span class="editor-field-label" id="editor-score-label">Score</span></div><NumberStepper id="editor-manual-score" name="manual_score" label="Score" labelledBy="editor-score-label" min={0} max={10} step={0.1} value={0} score/></div>
       <SeriesEditorPanel/>
+      <div class="editor-number-field game-playtime" data-game-only hidden>
+        <div class="editor-field-heading"><label class="editor-field-label" id="game-total-hours-label" for="game-total-hours">Total playtime (h)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div>
+        <NumberStepper id="game-total-hours" name="game_total_hours" label="Total playtime" labelledBy="game-total-hours-label" step={gameHourStep} increment={0.5}/>
+      </div>
       <div class="editor-number-field game-first-completion" data-game-only hidden>
         <div class="editor-field-heading"><label class="editor-field-label" id="game-first-hours-label" for="game-first-hours">First completion (h)</label></div>
         <div data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time" labelledBy="game-first-hours-label" step={gameHourStep} increment={0.5}/></div>
         <input class="game-first-reading" data-game-first-reading type="number" step={gameHourStep} aria-labelledby="game-first-hours-label" readonly tabindex="-1" hidden/>
         <span class="game-first-reading" data-game-first-empty hidden></span>
-      </div>
-      <div class="editor-number-field game-playtime" data-game-only hidden>
-        <div class="editor-field-heading"><label class="editor-field-label" id="game-total-hours-label" for="game-total-hours">Total playtime (h)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div>
-        <NumberStepper id="game-total-hours" name="game_total_hours" label="Total playtime" labelledBy="game-total-hours-label" step={gameHourStep} increment={0.5}/>
       </div>
       <div class="editor-start-date"><span class="editor-field-label" id="editor-start-date-label">Start date</span><CalendarDateInput id="editor-start-date" name="start_date" label="Start date" labelledBy="editor-start-date-label"/></div><div class="editor-finish-date"><span class="editor-field-label" id="editor-finish-date-label">Finish date</span><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date" labelledBy="editor-finish-date-label"/></div>
       <div class="wide editor-notes"><span class="editor-field-label" id="editor-notes-label">Notes</span><textarea name="notes" rows="2" aria-labelledby="editor-notes-label"></textarea></div>
@@ -205,6 +205,7 @@ document.addEventListener('astro:page-load', () => {
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
     dialog.dataset.editorDomain=game?'game':'movies-series';
     dialog.dataset.editorType=title.type;
+    dialog.toggleAttribute('data-motion-fade',game);
     currentTitle = title;
     current = {id:title.id, type:title.type, status:'planning', ...(game?title.game_state||entry:entry)||{progress:0,rating_mode:'manual',manual_score:null}};
     current.status ||= 'planning';
