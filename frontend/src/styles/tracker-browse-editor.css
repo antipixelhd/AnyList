@@ -1,17 +1,11 @@
 /* Browse keeps the search compact while the default view leads with trending titles. */
 [data-game-only][hidden],.editor [hidden]{display:none!important}
-.editor-fields:has(>.game-playtime:not([hidden])){grid-template-columns:repeat(6,minmax(0,1fr))}
-.editor-fields:has(>.game-playtime:not([hidden]))>:is(.editor-status-field,.editor-score-field,.game-playtime,.game-first-completion){grid-column:span 3}
-.editor-fields:has(>.game-playtime:not([hidden]))>:is(.editor-start-date,.editor-finish-date,.game-replays){grid-column:span 2;grid-row:auto;min-width:0}
-.editor-fields:has(>.game-playtime:not([hidden]))>:is(.editor-start-date,.editor-finish-date,.game-replays)>.editor-field-label{display:flex;align-items:center;min-block-size:28px}
-.editor .editor-fields:has(>.game-playtime:not([hidden]))>.editor-notes{max-width:none}
-.editor[data-editor-domain=game] .editor-actions:has(>button[hidden]){display:none}
 .editor .game-first-completion [data-game-first-input]>.score-stepper{margin-top:6px}
 .editor .game-first-reading{display:flex;align-items:center;width:100%;min-block-size:42px;margin:6px 0 0;padding:0 12px;border:0;background:none;color:var(--muted);font-size:var(--type-control-size);font-variant-numeric:tabular-nums}
 .editor input.game-first-reading{color:var(--text)}
 .editor input.game-first-reading:focus{outline:none;color:var(--bright)}
 .game-achievement-editor,.game-achievement-controls{display:grid;gap:12px}
-.editor .game-achievement-editor{align-content:start;gap:0;min-width:0;border-block-start:1px solid var(--border)}
+.editor .game-achievement-editor{align-content:start;gap:0;min-width:0}
 .game-achievement-heading{display:flex;align-items:center;gap:12px}
 .editor .game-achievement-toggle{display:flex;align-items:center;gap:10px;flex:1;min-width:0;min-block-size:44px;padding:0;border:0;background:none;color:var(--muted);font:inherit;font-size:var(--type-label-size);text-align:start;cursor:pointer}
 .game-achievement-summary{margin-inline-start:auto;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -59,9 +53,6 @@
 .editor [data-game-only] input[type=number]{-moz-appearance:textfield}
 @media(prefers-reduced-motion:no-preference){.game-achievement-toggle :is(.ui-icon,.ui-icon-svg){transition:rotate .16s ease}}
 @media(max-width:650px){
-  .editor .editor-fields:has(>.game-playtime:not([hidden])){grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px}
-  .editor .editor-fields:has(>.game-playtime:not([hidden]))>:not(.wide){grid-column:auto!important}
-  .editor .editor-fields:has(>.game-playtime:not([hidden]))>.wide{grid-column:1 / -1!important}
   .game-achievement-option small{max-width:64px;text-align:right}
   .game-base-link{flex-wrap:wrap}
   .game-achievement-controls{grid-template-columns:minmax(0,1fr) auto;gap:10px}
@@ -589,6 +580,71 @@ body:has(#tracking-editor[open]) {
 }
 @media(prefers-reduced-motion:reduce) {
   .editor-hero-actions :is(.editor-favorite,.editor-library) { transition:none }
+}
+.editor .editor-fields:has(>.game-playtime:not([hidden])) {
+  gap:16px 24px;
+}
+.editor-fields:has(>.game-playtime:not([hidden])) > * {
+  min-width:0;
+}
+.editor-fields:has(>.game-playtime:not([hidden])) > * > :is(.editor-field-heading,.editor-field-label) {
+  display:flex;
+  align-items:center;
+  min-height:20px;
+  gap:6px;
+}
+.editor .editor-fields:has(>.game-playtime:not([hidden])) > .editor-notes {
+  max-width:none;
+}
+.editor .editor-fields:has(>.game-playtime:not([hidden])) .editor-notes textarea {
+  display:block;
+  min-height:46px;
+  height:46px;
+}
+@media(min-width:651px) {
+  .editor .editor-fields:has(>.game-playtime:not([hidden])) {
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-start-date { grid-area:1 / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-finish-date { grid-area:2 / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .editor-notes { grid-area:3 / 1 / auto / 3; }
+  .editor-fields:has(>.game-playtime:not([hidden])) > .game-replays { grid-area:3 / 3; }
+}
+@media(max-width:650px) {
+  .editor .editor-fields:has(>.game-playtime:not([hidden])) {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:14px;
+  }
+  .editor .editor-fields:has(>.game-playtime:not([hidden])) > .editor-notes {
+    grid-column:1!important;
+  }
+}
+.editor[data-editor-domain=game] .editor-actions {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:0 12px;
+  align-items:center;
+}
+.editor[data-editor-domain=game] .editor-actions:has(>.game-achievement-editor:not([hidden])) {
+  border-block-start:1px solid var(--border);
+}
+.editor[data-editor-domain=game] .editor-actions:not(:has(>:not([hidden]))) {
+  display:none;
+}
+.editor[data-editor-domain=game] .editor-delete-button {
+  grid-area:1 / 2;
+  white-space:nowrap;
+}
+@supports(grid-template-columns:subgrid) {
+  .editor[data-editor-domain=game] .editor-actions > .game-achievement-editor {
+    grid-area:1 / 1 / span 2 / -1;
+    grid-template-columns:subgrid;
+    grid-template-rows:subgrid;
+    gap:normal;
+  }
+  .editor[data-editor-domain=game] [data-game-achievement-reveal] {
+    grid-column:1 / -1;
+  }
 }
 .library-toggle {
   width:100%;
