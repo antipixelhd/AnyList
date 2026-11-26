@@ -2,6 +2,8 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
@@ -209,6 +211,31 @@ class ImageProviderTests(unittest.IsolatedAsyncioTestCase):
              patch('core.tvdb._get',AsyncMock(side_effect=fetch)) as provider:
             self.assertEqual(await title_artwork(None,media,'tvdb-key','tmdb-key'),{'posters':[],'backdrops':[]})
         self.assertIn('/movies/8/extended',[call.args[0] for call in provider.await_args_list])
+
+    async def test_movie_artwork_recovers_from_a_single_tvdb_read_timeout(self):
+        from core.screen_artwork import title_artwork
+        poster = 'https://artworks.thetvdb.com/banners/poster.jpg'
+        path = '/movies/8/extended'
+        media = SimpleNamespace(media_type=SimpleNamespace(value='movie'), tmdb_id=7,
+                                imdb_id='tt77', tmdb_data={})
+        attempts = 0
+
+        async def fetch(request_path, key):
+            nonlocal attempts
+            if request_path == '/artwork/types':
+                return {'data': [{'id': 14, 'name': 'Poster', 'recordType': 'movie'}]}
+            self.assertEqual(request_path, path)
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ReadTimeout('Temporary provider timeout')
+            return {'data': {'id': 8, 'artworks': [{'type': 14, 'image': poster, 'language': 'eng'}]}}
+
+        with (patch('core.screen_artwork.screen_sources', AsyncMock(return_value=[('tmdb', 7), ('tvdb', 8)])),
+              patch('core.tvdb._get', AsyncMock(side_effect=fetch))):
+            raw = await title_artwork(None, media, 'tvdb-key', 'tmdb-key')
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(provider_images(raw, 'tvdb')['posters'], [poster])
 
     async def test_ambiguous_bridge_does_not_guess_a_title(self):
         from core.screen_artwork import title_artwork

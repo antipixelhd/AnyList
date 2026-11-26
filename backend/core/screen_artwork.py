@@ -2,12 +2,14 @@
 import asyncio
 from functools import lru_cache
 
+import httpx
 import pycountry
 
 from core import tmdb, tvdb
 from core.screen_metadata_policy import screen_sources
 
 _slots = asyncio.Semaphore(2)
+_artwork_request_timeout = 8
 
 
 class ArtworkIdentityUnavailable(ValueError):
@@ -60,6 +62,16 @@ def artwork_candidates(raw, types, kind, *, original_language=None):
     return result
 
 
+async def _get_artwork(path, api_key):
+    """Give a timed-out TVDB read one more chance before deferring the gallery."""
+    try:
+        async with asyncio.timeout(_artwork_request_timeout):
+            return await tvdb._get(path, api_key)
+    except (TimeoutError, httpx.TimeoutException):
+        async with asyncio.timeout(_artwork_request_timeout):
+            return await tvdb._get(path, api_key)
+
+
 async def title_artwork(db, media, tvdb_key, tmdb_key=None):
     kind = media.media_type.value
     native = dict(await screen_sources(db, media)).get('tvdb')
@@ -72,14 +84,14 @@ async def title_artwork(db, media, tvdb_key, tmdb_key=None):
         if not native and imdb:
             import re
             if re.fullmatch(r'tt[0-9]+', imdb):
-                response = await tvdb._get('/search/remoteid/' + imdb, tvdb_key)
+                response = await _get_artwork('/search/remoteid/' + imdb, tvdb_key)
                 candidates = {row[kind]['id'] for row in response.get('data') or []
                               if isinstance(row.get(kind), dict) and type(row[kind].get('id')) is int}
                 native = next(iter(candidates)) if len(candidates) == 1 else None
         if not native:
             raise ArtworkIdentityUnavailable('No verified TVDB title identity')
         path = f'/series/{native}/artworks' if kind == 'series' else f'/movies/{native}/extended'
-        artwork, taxonomy = await asyncio.gather(tvdb._get(path,tvdb_key),tvdb._get('/artwork/types',tvdb_key))
+        artwork, taxonomy = await asyncio.gather(_get_artwork(path, tvdb_key), _get_artwork('/artwork/types', tvdb_key))
         raw = artwork.get('data') or {}
         if str(raw.get('id')) != str(native) or not isinstance(raw.get('artworks'), list):
             raise ValueError('Invalid TVDB artwork response')
