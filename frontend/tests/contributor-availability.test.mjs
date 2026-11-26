@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility} from '../src/lib/contributor-availability.ts';
+import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,disabledContributorOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility} from '../src/lib/contributor-availability.ts';
 
 test('only verified empty options disable; merged movies/series needs both negatives',()=>{
   for(const movie of ['unknown','available','empty'])for(const series of ['unknown','available','empty']){
@@ -52,6 +52,21 @@ test('saved negatives collapse redundant switches while unknown checks preserve 
   const fresh=mergePersonTabRoles(roles,{actor:{...unknown,series:'available',game:'available'},
     staff:{...unknown,series:'available'}});
   assert.deepEqual(personSwitchVisibility(fresh,'actor','all',true),{role:true,domain:true,screen:true});
+});
+
+test('studios use saved media evidence without collapsing the layout mid-visit',()=>{
+  const saved={movie:'available',series:'unknown',game:'unknown'};
+  const verified={movie:'available',series:'empty',game:'empty'};
+  assert.deepEqual(contributorMediaSwitchVisibility(undefined,'all',true),{domain:true,screen:true});
+  assert.deepEqual(contributorMediaSwitchVisibility(verified,'all',true,saved),{domain:true,screen:true});
+  assert.equal(contributorMediaOptionDisabled('media_type','series','all',true,verified),true);
+  assert.deepEqual(contributorMediaSwitchVisibility(verified,'all',true),{domain:false,screen:false});
+  assert.equal(contributorMediaSwitchVisibility(verified,'series',false).screen,true);
+  assert.equal(contributorMediaSwitchVisibility(verified,'game',false).domain,true);
+  const rechecking={movie:'unknown',series:'unknown',game:'available'};
+  const updated=mergeContributorDomains(verified,rechecking);
+  assert.deepEqual(contributorMediaSwitchVisibility(updated,'all',true,verified),{domain:true,screen:false});
+  assert.equal(contributorMediaOptionDisabled('media_type','series','series',true,verified),false);
 });
 
 async function fixture(run){

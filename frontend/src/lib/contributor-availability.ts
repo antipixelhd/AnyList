@@ -1,5 +1,5 @@
 export type DomainState='unknown'|'available'|'empty'|'unavailable';
-type Domains=Record<'movie'|'series'|'game',DomainState>;
+export type Domains=Record<'movie'|'series'|'game',DomainState>;
 type PersonRole='actor'|'staff';
 export type PersonTabRoles=Record<PersonRole,Domains>;
 export interface ContributorAvailability {
@@ -10,6 +10,12 @@ export function disabledContributorOption(name:string,value:string,domains:Domai
   if(name==='domain')return value==='game'?unavailableChoice(domains.game):domains.movie==='empty'&&domains.series==='empty';
   return value==='all'?domains.movie==='empty'&&domains.series==='empty'
     :value==='movie'||value==='series'?domains[value]==='empty':false;
+}
+
+export function contributorMediaOptionDisabled(name:string,value:string,media:string,hasWorks:boolean,domains?:Domains):boolean {
+  const games=media==='game';
+  const showing=name==='domain'?value===(games?'game':'movies-series'):!games&&(value==='all'||value===media);
+  return !!domains&&!(showing&&hasWorks)&&disabledContributorOption(name,value,domains);
 }
 
 const personRoles=['actor','staff'] as const;
@@ -24,33 +30,45 @@ export function contributorRoleState(domains:Domains, media:string):DomainState 
   return domains.movie==='empty'&&domains.series==='empty'?'empty':'unknown';
 }
 
+export function mergeContributorDomains(previous:Domains|undefined,next:Domains):Domains {
+  const updated={...next};
+  for(const name of domainNames)if(updated[name]==='unknown'&&previous)updated[name]=previous[name];
+  return updated;
+}
+
 export function mergePersonTabRoles(previous:PersonTabRoles|undefined,next:PersonTabRoles):PersonTabRoles {
-  const merge=(role:PersonRole):Domains=>{
-    const updated={...next[role]};
-    for(const name of domainNames)if(updated[name]==='unknown'&&previous)updated[name]=previous[role][name];
-    return updated;
+  return {actor:mergeContributorDomains(previous?.actor,next.actor),staff:mergeContributorDomains(previous?.staff,next.staff)};
+}
+
+// Newly confirmed negatives can disable controls now and collapse their space
+// on the next render. Fresh positives can restore a previously hidden choice.
+function layoutDomains(domains:Domains,saved:Domains):Domains {
+  const layout={...domains};
+  for(const name of domainNames)if(saved[name]==='unknown'&&layout[name]==='empty')layout[name]='unknown';
+  return layout;
+}
+
+export function contributorMediaSwitchVisibility(domains:Domains|undefined,media:string,hasWorks:boolean,saved=domains) {
+  if(!domains||!saved)return {domain:true,screen:true};
+  const own=layoutDomains(domains,saved),games=media==='game';
+  const screen=contributorRoleState(own,'all'),ownDomain=games?own.game:screen;
+  const singleScreen=(own.movie==='available'&&own.series==='empty')||(own.series==='available'&&own.movie==='empty');
+  return {
+    domain: !((hasWorks||ownDomain==='available')&&unavailableChoice(games?screen:own.game)),
+    screen: !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
   };
-  return {actor:merge('actor'),staff:merge('staff')};
 }
 
 export function personSwitchVisibility(roles:PersonTabRoles|undefined,role:PersonRole,media:string,hasWorks:boolean,
   saved:PersonTabRoles|undefined=roles) {
   if(!roles||!saved)return {role:true,domain:true,screen:true};
-  // Newly confirmed negatives still fade on this visit if that choice had
-  // never been checked. A newly found credit may restore a saved hidden choice.
-  const layout=(mode:PersonRole):Domains=>({
-    movie:saved[mode].movie==='unknown'&&roles[mode].movie==='empty'?'unknown':roles[mode].movie,
-    series:saved[mode].series==='unknown'&&roles[mode].series==='empty'?'unknown':roles[mode].series,
-    game:saved[mode].game==='unknown'&&roles[mode].game==='empty'?'unknown':roles[mode].game,
-  });
-  const own=layout(role),other=layout(role==='actor'?'staff':'actor'),games=media==='game';
-  const screen=contributorRoleState(own,'all'),ownDomain=games?own.game:screen;
-  const singleScreen=(own.movie==='available'&&own.series==='empty')||(own.series==='available'&&own.movie==='empty');
-  const hasOtherCredits=Object.values(roles[role==='actor'?'staff':'actor']).includes('available');
+  const otherRole=role==='actor'?'staff':'actor';
+  const ownDomain=contributorRoleState(layoutDomains(roles[role],saved[role]),media==='game'?'game':'all');
+  const other=layoutDomains(roles[otherRole],saved[otherRole]);
+  const hasOtherCredits=Object.values(roles[otherRole]).includes('available');
   return {
     role: hasOtherCredits||!((hasWorks||ownDomain==='available')&&unavailableChoice(contributorRoleState(other,media))),
-    domain: !((hasWorks||ownDomain==='available')&&unavailableChoice(games?screen:own.game)),
-    screen: !(singleScreen&&(media==='all'||media==='game'||hasWorks||(media==='movie'?own.movie:own.series)==='available')),
+    ...contributorMediaSwitchVisibility(roles[role],media,hasWorks,saved[role]),
   };
 }
 

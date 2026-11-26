@@ -1026,6 +1026,16 @@ async def person_tab_availability(
     return await read_contributor_availability('person',contributor_key,response,db,viewer)
 
 
+@router.get('/contributors/studio/{contributor_key}/availability', response_model_exclude_none=True)
+async def studio_tab_availability(
+    contributor_key: Annotated[str,Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession,Depends(get_db, scope="function")],
+    viewer: Annotated[User | None,Depends(get_optional_user_or_api_key)],
+) -> ContributorAvailability:
+    return await read_contributor_availability('studio',contributor_key,response,db,viewer)
+
+
 @router.get('/contributors/{kind}/{contributor_key}/availability', response_model_exclude_none=True)
 async def contributor_domain_availability(
     kind: ContributorKind,
@@ -1102,10 +1112,13 @@ async def contributor_details(
         raise HTTPException(502, 'Unable to load more works. Try again.') from None
     if result is None:
         raise HTTPException(404, 'Contributor not found')
-    if kind=='person' and include_tab_snapshot and result['key'].startswith('catalogue:'):
-        from core.contributor_availability import saved_person_tabs
+    if include_tab_snapshot and kind in ('person','studio'):
+        from core.contributor_availability import saved_person_tabs, saved_studio_tabs
         from core.game_access import allowed
-        result['tab_roles']=await saved_person_tabs(db,int(result['key'].split(':')[1]),include_games=allowed(viewer))
+        if kind=='studio':
+            result['tab_domains']=await saved_studio_tabs(db,result['key'],include_games=allowed(viewer))
+        elif result['key'].startswith('catalogue:'):
+            result['tab_roles']=await saved_person_tabs(db,int(result['key'].split(':')[1]),include_games=allowed(viewer))
     return ContributorPage.model_validate(result)
 
 

@@ -9,7 +9,7 @@ from sqlalchemy import event,func,select
 import test_statistics_pg as database
 import test_game_contributor_works_pg as fixture
 from core import contributor_evidence as evidence
-from core.contributor_availability import movie_job, saved_person_tabs
+from core.contributor_availability import movie_job, saved_person_tabs, saved_studio_tabs
 from core.game_imdb_enrichment import now
 from core.game_imdb_person import JOB,COMPONENT,VERSION as PERSON_VERSION
 from core.game_credit_roles import CREDIT_POLICY_VERSION
@@ -250,6 +250,7 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone((await db.scalar(select(ContributorEvidence))).next_attempt_at)
 
     async def test_company_background_verification_is_distinct_from_search_sampling(self):
+        self.app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
         async with self.Session() as db:
             company=CatalogueEntity(kind='organization',name='Verified company');db.add(company);await db.flush()
             db.add(CatalogueIdentity(entity_id=company.id,namespace='tmdb.company',external_id='888',source='tmdb'))
@@ -262,3 +263,23 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         result=(await self.read(entity,'studio')).json()
         self.assertEqual(result['domains'],{'movie':'empty','series':'empty','game':'unknown'})
         self.assertFalse(result['pending'])
+        self.viewer.games_access=False
+        screen=await self.read(entity,'studio')
+        self.assertEqual(screen.status_code,200,screen.text)
+        self.assertEqual(screen.json()['domains'],result['domains'])
+        async with self.Session() as db:
+            snapshot=await saved_studio_tabs(db,f'catalogue:{entity}',include_games=False)
+            self.assertEqual(snapshot,result['domains'])
+
+        page={'kind':'studio','key':f'catalogue:{entity}','name':'Verified company',
+              'works':[],'known_works':0,'page':1,'has_more':False}
+        with patch('core.contributor_details.contributor_page',AsyncMock(return_value=page)):
+            response=await self.client.get(f'/tracking/contributors/studio/catalogue:{entity}?include_tab_snapshot=true')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['tab_domains'],snapshot)
+        self.viewer=None
+        guest=await self.read(entity,'studio')
+        self.assertEqual(guest.json()['domains'],snapshot)
+        with patch('core.tracking_access.get_global_settings',AsyncMock(return_value=None)):
+            denied=await self.read(entity,'studio')
+        self.assertEqual(denied.status_code,401)

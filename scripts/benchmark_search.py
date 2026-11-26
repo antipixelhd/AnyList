@@ -239,6 +239,9 @@ async def main(args):
                     db.add(MetadataSnapshot(provider='igdb',kind='game_company_job',external_id='7000000',entity_id=company.id,
                         coverage={'state':'complete','complete':True,'received':1000,'total':1000,'generation':'cached'},
                         payload={'raw_company_evidence':'COMPANY_RAW_SENTINEL '*50000},fetched_at=stamp,expires_at=stamp+timedelta(days=7)))
+                    from core.contributor_availability import STUDIO_TAB_SNAPSHOT
+                    db.add(MetadataSnapshot(provider='anylist',kind=STUDIO_TAB_SNAPSHOT,
+                        external_id=f'catalogue:{company.id}',entity_id=company.id,payload={'studio.game':'available'}))
                 if not args.case or any(name.startswith('game_person') or name=='person_tab_availability' for name in args.case):
                     db.add(CatalogueIdentity(entity_id=performer.id,namespace='imdb.person',external_id='nm8000000',source='imdb'))
                     stamp=datetime.now(timezone.utc).replace(tzinfo=None)
@@ -852,7 +855,7 @@ async def main(args):
             cases += [('screen_actor_works',f'contributors/actor/catalogue:{screen_person_id}',{}),
                       ('screen_crew_works',f'contributors/staff/catalogue:{screen_person_id}',{})]
         cases += [
-            *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
+            *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game','include_tab_snapshot':'true'})] if game_company_id else []),
             *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),
             *([('game_company_search','quick-search/contributors',{'q':'Portfolio company','kind':'studio','work_domain':'game'})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
@@ -1289,6 +1292,8 @@ async def main(args):
                             return result
                         if label=='game_company_cached':
                             result=await request(path,params)
+                            if result.get('tab_domains')!={'movie':'unknown','series':'unknown','game':'available'}:
+                                raise RuntimeError('Cached company lost its server-rendered media choices')
                             if result['known_works']!=args.local_titles or len(result['works'])!=min(24,args.local_titles):
                                 raise RuntimeError('Company portfolio lost its full works or bounded page')
                             state=result.get('game_company_status')

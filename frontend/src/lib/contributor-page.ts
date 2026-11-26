@@ -14,7 +14,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
-import {contributorAvailability,contributorRoleState,disabledContributorOption,mergePersonTabRoles,personSwitchVisibility,unavailableChoice,type ContributorAvailability} from './contributor-availability';
+import {contributorAvailability,contributorMediaOptionDisabled,contributorMediaSwitchVisibility,contributorRoleState,disabledContributorOption,mergeContributorDomains,mergePersonTabRoles,personSwitchVisibility,unavailableChoice,type ContributorAvailability} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
@@ -91,10 +91,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     caption.textContent=[...item.characters,...item.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');
     caption.title=caption.textContent;caption.toggleAttribute('data-character-pending',!!item.characters_pending&&!item.characters.length);
   };
-  const savedLayout=data.tab_roles;
-  let availability:ContributorAvailability|undefined=data.tab_roles
-    ?{key:data.key,roles:data.tab_roles,pending:false}:undefined;
-  const activeDomains=()=>data.kind==='studio'?availability?.domains:availability?.roles?.[data.kind];
+  const savedRoles=data.tab_roles,savedDomains=data.tab_domains;
+  let availability:ContributorAvailability={key:data.key,roles:savedRoles,domains:savedDomains,pending:false};
+  const domainSwitch=form.querySelector<HTMLFieldSetElement>('[data-contributor-media-switch]')!;
+  const screenSwitch=form.querySelector<HTMLFieldSetElement>('[data-contributor-screen-types]')!;
+  const roleSwitch=form.querySelector<HTMLFieldSetElement>('[data-contributor-role-switch]');
+  const canSwitchDomains=domainSwitch.querySelectorAll('input[name=domain]').length>1;
+  const activeDomains=()=>data.kind==='studio'?availability.domains:availability.roles?.[data.kind];
   const selectedMedia=()=>params.get('media_type')||'all';
   const canRetainSelection=()=>{
     const domains=activeDomains();
@@ -103,24 +106,25 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   const paintAvailability=()=>{
     const domains=activeDomains();
-    if(!domains)return;
     const media=selectedMedia(),games=media==='game',hasWorks=items.size>0;
     for(const input of form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]')){
-      const hasResult=hasWorks&&(input.name==='domain'?input.value===(games?'game':'movies-series')
-        :!games&&(input.value==='all'||input.value===media));
-      input.disabled=!hasResult&&disabledContributorOption(input.name,input.value,domains);
+      input.disabled=contributorMediaOptionDisabled(input.name,input.value,media,hasWorks,domains);
     }
     for(const input of form.querySelectorAll<HTMLInputElement>('input[name=role]')){
-      const role=availability?.roles?.[input.value==='staff'?'staff':'actor'];
+      const role=availability.roles?.[input.value==='staff'?'staff':'actor'];
       input.disabled=!(hasWorks&&input.value===data.kind)&&!!role&&unavailableChoice(contributorRoleState(role,media));
     }
-    if(savedLayout&&data.kind!=='studio'){
-      const visible=personSwitchVisibility(availability?.roles,data.kind,media,hasWorks,savedLayout);
-      form.querySelector<HTMLElement>('[data-contributor-role-switch]')!.hidden=!visible.role;
-      const outer=form.querySelector<HTMLElement>('[data-contributor-media-switch]')!;
-      outer.hidden=!visible.domain||outer.querySelectorAll('input[name=domain]').length<2;
-      form.querySelector<HTMLElement>('[data-contributor-screen-types]')!.hidden=games||!visible.screen;
+    let visible={domain:true,screen:true};
+    if(data.kind==='studio'){
+      if(savedDomains)visible=contributorMediaSwitchVisibility(domains,media,hasWorks,savedDomains);
+    }else if(roleSwitch&&savedRoles){
+      const person=personSwitchVisibility(availability.roles,data.kind,media,hasWorks,savedRoles);
+      roleSwitch.hidden=!person.role;
+      visible=person;
     }
+    domainSwitch.hidden=!canSwitchDomains||!visible.domain;
+    screenSwitch.hidden=games||!visible.screen;
+    screenSwitch.disabled=games;
   };
   const paintBanner=mountContributorBanner(root.querySelector<HTMLImageElement>('[data-contributor-banner]')!,signal);
   const updateBanner=()=>paintBanner([...region.querySelectorAll<HTMLElement>('[data-work-key]')]
@@ -133,11 +137,6 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   portrait?.addEventListener('error', missingPortrait, {signal});
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
-  const syncDomainFields=()=>{
-    const movies = form.querySelector<HTMLFieldSetElement>('[data-contributor-screen-types]')!;
-    const games = (form.elements.namedItem('domain') as RadioNodeList).value === 'game';
-    movies.hidden = movies.disabled = games;
-  };
   const restoreFilterControls=()=>{
     const type=params.get('media_type')||'all';
     form.querySelectorAll<HTMLInputElement>('[name=domain]').forEach(input=>input.checked=input.value===(type==='game'?'game':'movies-series'));
@@ -146,7 +145,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
     if(scope)scope.checked=params.get('list_scope')==='in';
     paintListButton();
-    syncDomainFields();
+    paintAvailability();
   };
   form.addEventListener('change', () => {
     form.requestSubmit();
@@ -433,7 +432,6 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           for(const key of [...params.keys()])params.delete(key);
           query.forEach((value,key)=>params.set(key,value));
           root.dataset.mediaType=params.get('media_type')||'all';
-          syncDomainFields();
           sourceRefresh.update(params.get('media_type')==='game'?next.game_company_status||next.game_person_status:null);
           const count=root.querySelector('[data-contributor-list-count]');
           if(count)count.textContent=String(data.list_count||0);
@@ -451,8 +449,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
           if(!cached)append(next.works);
           retainCurrent=true;
           if(switching)restoreFilterControls();
+          else paintAvailability();
           if(cached){root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';paintLayoutControls();}
-          paintAvailability();
           more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
           const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
           notice.textContent=next.notice||'';notice.hidden=!next.notice;
@@ -477,7 +475,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const loading=root.querySelector<HTMLElement>('[data-contributor-loading]')!;
   const pathFor=(query:URLSearchParams)=>`/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
   const warmSibling=(domain:string)=>{
-    if(root.dataset.contributorAvailability!=='true'||signal.aborted)return;
+    if(signal.aborted)return;
     const query=new URLSearchParams(params);
     query.delete('page');query.delete('source');query.delete('cursor');
     query.set('media_type',domain==='game'?'game':'all');
@@ -555,11 +553,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     void synchronize();
     pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')!=='game');
   };
+  restoreFilterControls();
   root.dataset.enhanced = '';
-  if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,next=>{
-    const previousAvailability=availability?.roles||availability?.domains;
+  contributorAvailability(root.dataset.endpoint!,data.key,signal,next=>{
+    const previousAvailability=availability.roles||availability.domains;
     const previous=activeDomains();
-    availability=next.roles?{...next,roles:mergePersonTabRoles(availability?.roles,next.roles)}:next;
+    availability=next.roles?{...next,roles:mergePersonTabRoles(availability.roles,next.roles)}
+      :next.domains?{...next,domains:mergeContributorDomains(availability.domains,next.domains)}:next;
     const current=activeDomains();
     paintAvailability();
     if(previousAvailability&&JSON.stringify(previousAvailability)!==JSON.stringify(availability.roles||availability.domains)){

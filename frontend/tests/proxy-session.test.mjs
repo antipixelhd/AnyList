@@ -34,7 +34,9 @@ test('guest contributor requests reach their declared read routes only when gues
     ['GET','contributors/person/catalogue:42/availability',true],
     ['GET','contributors/person/catalogue:42/images',true],
     ['GET','contributors/person/catalogue:42/series/7/episode-credits',true],
-    ['GET','contributors/studio/catalogue:42/availability',false],
+    ['GET','contributors/studio/tmdb%3A42',true],
+    ['GET','contributors/studio/catalogue:42/availability',true],
+    ['POST','contributors/studio/catalogue:42/availability',false],
     ['POST','contributors/person/catalogue:42/availability',false],
   ]){
     for(const enabled of [false,true]){

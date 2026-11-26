@@ -17,33 +17,47 @@ from models.catalogue import ContributorEvidence, CatalogueEntity, CatalogueCred
 from models.title_credits import TitleCredits
 
 TAB_SNAPSHOT='person_tab_availability'
+STUDIO_TAB_SNAPSHOT='studio_tab_availability'
 PERSON_ROLES=('actor','staff')
 DOMAINS=('movie','series','game')
 
 
-async def saved_person_tabs(db,entity_id,*,include_games):
+async def saved_tabs(db,kind,key,roles,*,include_games):
     domains=DOMAINS if include_games else ('movie','series')
     fields=[MetadataSnapshot.payload[f'{role}.{domain}'].astext.label(f'{role}.{domain}')
-        for role in PERSON_ROLES for domain in domains]
+        for role in roles for domain in domains]
     values=(await db.execute(select(*fields).where(
-        MetadataSnapshot.provider=='anylist',MetadataSnapshot.kind==TAB_SNAPSHOT,
-        MetadataSnapshot.external_id==str(entity_id)))).mappings().one_or_none()
+        MetadataSnapshot.provider=='anylist',MetadataSnapshot.kind==kind,
+        MetadataSnapshot.external_id==key))).mappings().one_or_none()
     if not values:return None
-    roles={role:{domain:values.get(f'{role}.{domain}') or 'unknown'
-        for domain in DOMAINS} for role in PERSON_ROLES}
-    return roles if any(value!='unknown' for domains in roles.values() for value in domains.values()) else None
+    states={role:{domain:values.get(f'{role}.{domain}') or 'unknown'
+        for domain in DOMAINS} for role in roles}
+    return states if any(value!='unknown' for domains in states.values() for value in domains.values()) else None
 
 
-async def save_person_tabs(db,entity_id,states,*,include_games):
+async def saved_person_tabs(db,entity_id,*,include_games):
+    return await saved_tabs(db,TAB_SNAPSHOT,str(entity_id),PERSON_ROLES,include_games=include_games)
+
+
+def studio_tab_key(key):
+    return f"tmdb:{studio_root(int(key.split(':')[1]))}" if key.startswith('tmdb:') else key
+
+
+async def saved_studio_tabs(db,key,*,include_games):
+    states=await saved_tabs(db,STUDIO_TAB_SNAPSHOT,studio_tab_key(key),('studio',),include_games=include_games)
+    return states['studio'] if states else None
+
+
+async def save_tabs(db,kind,key,entity_id,states,*,include_games):
     observed={(role,domain):value for role,domains in states.items() for domain,value in domains.items()
         if value!='unknown'}
     if not observed:return
-    previous=await saved_person_tabs(db,entity_id,include_games=include_games) or {}
+    previous=await saved_tabs(db,kind,key,states,include_games=include_games) or {}
     changed={f'{role}.{domain}':value for (role,domain),value in observed.items()
         if previous.get(role,{}).get(domain)!=value}
     if not changed:return
-    write=insert(MetadataSnapshot).values(provider='anylist',kind=TAB_SNAPSHOT,
-        external_id=str(entity_id),entity_id=entity_id,payload=changed,fetched_at=evidence.now())
+    write=insert(MetadataSnapshot).values(provider='anylist',kind=kind,
+        external_id=key,entity_id=entity_id,payload=changed,fetched_at=evidence.now())
     await db.execute(write.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
         'payload':MetadataSnapshot.payload.op('||')(write.excluded.payload),
         'fetched_at':write.excluded.fetched_at}))
@@ -144,8 +158,7 @@ async def preserve_local_movies(db,states,entity,native,kind):
 
 
 async def availability(db,viewer,*,kind,key):
-    # Legacy role and studio reads remain Games-gated.
-    if kind!='person':require(viewer)
+    if kind in ('actor','staff'):require(viewer)
     resolved=await resolve_contributor(db,kind,key,include_identities=True)
     if resolved is None:return None
     entity,native,identities=resolved
@@ -156,7 +169,8 @@ async def availability(db,viewer,*,kind,key):
         states[mode]['game']='unknown'
     delays=[retry] if pending else []
     game_pending=False;source=None
-    if entity and allowed(viewer):
+    include_games=allowed(viewer)
+    if entity and include_games:
         for mode in kinds:
             if await db.scalar(select(select(game_credits(entity.id,mode).c.id).exists())):
                 states[mode]['game']='available'
@@ -204,9 +218,13 @@ async def availability(db,viewer,*,kind,key):
                             # and the live source cannot confirm the career.
                             states[mode]['game']='unavailable'
     if game_pending:delays.append(max(3,min(60,(source or {}).get('retry_after',3))))
+    resolved_key=f'catalogue:{entity.id}' if entity else key
     if kind=='person' and entity:
-        await save_person_tabs(db,entity.id,states,include_games=allowed(viewer))
+        await save_tabs(db,TAB_SNAPSHOT,str(entity.id),entity.id,states,include_games=include_games)
+    elif kind=='studio':
+        await save_tabs(db,STUDIO_TAB_SNAPSHOT,studio_tab_key(resolved_key),entity.id if entity else None,
+            states,include_games=include_games)
     await db.commit()
-    return {'key':f'catalogue:{entity.id}' if entity else key,
+    return {'key':resolved_key,
         **({'roles':states} if kind=='person' else {'domains':states[kind]}),
         'pending':bool(delays),'retry_after':max(3,min(delays,default=3))}
