@@ -1,9 +1,9 @@
-"""Rank people by observed person popularity and studios by credited works."""
+"""Browse people by observed popularity and studios by catalogue credits."""
 import asyncio
 from datetime import datetime, timezone
 from typing import Literal
 
-from sqlalchemy import Float, and_, case, cast, func, literal, or_, select, union_all
+from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
 from sqlalchemy.orm import aliased
 
 from core.game_contributor_works import COMPANIES
@@ -16,7 +16,6 @@ from models.catalogue import CatalogueCredit as Credit, CatalogueEntity as Entit
 
 PAGE_SIZE = 24
 PREVIEW_SIZE = 12
-WORK_LIMIT = 360
 GAME_TYPES = tuple(sorted(INDEPENDENT - {'bundle', 'port'}))
 StaffJob = Literal['acting', 'directing', 'writing', 'producing', 'music', 'cinematography', 'editing']
 JOBS = {
@@ -56,37 +55,12 @@ def visible_work(work, domain, show_anime, hide_erotic):
     return and_(public, ~func.coalesce(and_(animation, japan), False))
 
 
-def work_ranking(domain, sort, show_anime, hide_erotic):
-    attrs = Entity.attributes
-    if domain == 'game':
-        steam = attrs['game_ratings']['all_time']
-        votes = func.coalesce(func.nullif(number(attrs['igdb_rating_count']), 0), number(steam['total']))
-        score = func.coalesce(func.nullif(number(attrs['igdb_rating']), 0), number(steam['percentage']))
-        minimum = 20
-    else:
-        votes = number(attrs['vote_count'])
-        score = number(attrs['vote_average'])
-        minimum = 50
-    by_score = sort == 'score'
-    order = (score.desc(), votes.desc()) if by_score else (votes.desc(),)
-    statement = select(Entity.id.label('work_id'), func.rank().over(order_by=order).label('rank')).where(
-        Entity.kind == domain, visible_work(Entity, domain, show_anime, hide_erotic),
-        votes >= (minimum if by_score else 1))
-    if by_score:
-        statement = statement.where(score > 0)
-    return statement.order_by(*order, Entity.id).limit(WORK_LIMIT).subquery()
-
-
-def studio_credits(domain, sort, show_anime, hide_erotic):
-    works = work_ranking(domain, sort, show_anime, hide_erotic)
-    alias = aliased(Entity)
-    root_id = func.coalesce(alias.canonical_company_id, alias.id)
-    return select(root_id.label('entity_id'), works.c.work_id, works.c.rank, literal(domain).label('domain')).select_from(works).join(
-        Credit, Credit.work_id == works.c.work_id).join(alias, alias.id == Credit.contributor_id).where(
-        alias.kind == 'organization',
-        Credit.attributes['source_active'].astext.is_distinct_from('false'),
-        Credit.role.in_(COMPANIES) if domain == 'game' else Credit.role == 'producer',
-    ).distinct()
+def directory_works(domains, show_anime, hide_erotic):
+    work = aliased(Entity)
+    # Check visibility once per title before joining the credit graph.
+    return select(work.id, work.kind).where(or_(*(and_(
+        work.kind == domain, visible_work(work, domain, show_anime, hide_erotic))
+        for domain in domains))).cte().prefix_with('MATERIALIZED', dialect='postgresql')
 
 
 def birthday_people(day):
@@ -96,12 +70,8 @@ def birthday_people(day):
 
 
 def eligible_staff(domains, job, birthdays, show_anime, hide_erotic):
-    work, alias = aliased(Entity), aliased(Entity)
-    # Check work visibility once per title, then join the credit graph in
-    # one pass. A correlated eligibility scan for each person does not scale.
-    works = select(work.id).where(or_(*(and_(
-        work.kind == domain, visible_work(work, domain, show_anime, hide_erotic))
-        for domain in domains))).cte().prefix_with('MATERIALIZED', dialect='postgresql')
+    alias = aliased(Entity)
+    works = directory_works(domains, show_anime, hide_erotic)
     root_id = func.coalesce(alias.canonical_person_id, alias.id)
     statement = select(root_id.label('entity_id')).select_from(Credit).join(
         works, works.c.id == Credit.work_id).join(alias, alias.id == Credit.contributor_id).where(
@@ -146,7 +116,7 @@ async def browse_contributors(db, *, kind, domains, sort, page, day=None, job=No
         cached = _pages.get(key)
         if cached is not None:
             return preview_page(cached) if preview else cached
-        async with asyncio.timeout(5 if kind == 'staff' else None):
+        async with asyncio.timeout(5):
             results = await ranked_page(db, kind, domains, sort, page, day, job, show_anime, hide_erotic)
         _pages.set(key, results, 90)
         return preview_page(results) if preview else results
@@ -173,27 +143,29 @@ def staff_page(domains, day, job, show_anime, hide_erotic):
 
 
 def studio_page(domains, sort, show_anime, hide_erotic):
-    credits = [studio_credits(domain, sort, show_anime, hide_erotic) for domain in domains]
-    memberships = (union_all(*credits).subquery() if len(credits) > 1 else credits[0].subquery())
-    strongest = select(memberships, func.row_number().over(partition_by=memberships.c.entity_id,
-        order_by=(memberships.c.rank, memberships.c.work_id)).label('position')).subquery()
-    # Reward up to three distinct works. Each title's position is relative to
-    # its media type, so different providers' raw vote volumes never compete.
-    ranking = select(strongest.c.entity_id, func.sum(1.0 / (10 + strongest.c.rank)).label('weight'),
-        func.max(strongest.c.domain).filter(strongest.c.position == 1).label('domain')).where(
-        strongest.c.position <= 3).group_by(strongest.c.entity_id).subquery()
-    profile = select(Entity.id, Entity.name, Entity.image_url, ranking.c.domain,
-        literal(None).label('department')).join(ranking, ranking.c.entity_id == Entity.id).where(
+    works, alias = directory_works(domains, show_anime, hide_erotic), aliased(Entity)
+    root_id = func.coalesce(alias.canonical_company_id, alias.id)
+    game = works.c.kind == 'game'
+    # Count a title once even when the same company has several roles or aliases.
+    credits = select(root_id.label('entity_id'), func.count(Credit.work_id.distinct()).label('work_count'),
+        case((func.bool_and(game), 'game')).label('domain')).select_from(Credit).join(
+        alias, alias.id == Credit.contributor_id).join(works, works.c.id == Credit.work_id).where(
+        alias.kind == 'organization', Credit.attributes['source_active'].astext.is_distinct_from('false'),
+        or_(and_(game, Credit.role.in_(COMPANIES)), and_(~game, Credit.role == 'producer')),
+    ).group_by(root_id).subquery()
+    profile = select(Entity.id, Entity.name, Entity.image_url, credits.c.domain,
+        literal(None).label('department')).join(credits, credits.c.entity_id == Entity.id).where(
         Entity.kind == 'organization', Entity.canonical_company_id.is_(None))
-    return profile, ranking.c.weight.desc()
+    return profile, (credits.c.work_count.desc(),) if sort == 'credits' else ()
 
 
 async def ranked_page(db, kind, domains, sort, page, day, job, show_anime, hide_erotic):
     if kind == 'staff':
         profile, order = staff_page(domains, day, job, show_anime, hide_erotic)
+        order = (order,)
     else:
         profile, order = studio_page(domains, sort, show_anime, hide_erotic)
-    rows = (await db.execute(profile.order_by(order,
+    rows = (await db.execute(profile.order_by(*order,
         func.lower(Entity.name), Entity.id).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE + 1))).all()
     return {'results': [{'key': f'catalogue:{row.id}',
         'name': studio_name(row.name) if kind == 'studio' else row.name,

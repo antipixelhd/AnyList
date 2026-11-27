@@ -17,8 +17,8 @@ export const staffRankings = [
 ] as const;
 
 export const studioRankings = [
-  ['popular', 'Most popular'],
-  ['score', 'Highest rated'],
+  ['credits', 'Most credited'],
+  ['name', 'A–Z'],
 ] as const;
 
 export const staffJobs = [

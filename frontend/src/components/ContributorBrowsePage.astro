@@ -21,7 +21,8 @@ const scope = !people && choices.find(([key]) => key === searchParams.get('scope
 const requestScope = scope === 'all' && !domains.show_games ? 'screen' :
   scope === 'all' && !domains.show_movies_series ? 'game' : scope;
 const sorts = people ? staffRankings : studioRankings;
-const sort = sorts.find(([key]) => key === searchParams.get('sort'))?.[0] || 'popular';
+const defaultSort = sorts[0][0];
+const sort = sorts.find(([key]) => key === searchParams.get('sort'))?.[0] || defaultSort;
 const job = people ? staffJobs.find(([key]) => key === searchParams.get('job'))?.[0] || '' : '';
 const landing = people && !['sort', 'job', 'page'].some(key => searchParams.has(key));
 const requestedPage = Number(searchParams.get('page'));
@@ -38,7 +39,7 @@ function href(next: {sort?: string; page?: number} = {}) {
   const params = new URLSearchParams();
   const order = next.sort ?? sort;
   if (scope !== 'all') params.set('scope', scope);
-  if (people || order !== 'popular') params.set('sort', order);
+  if (people || order !== defaultSort) params.set('sort', order);
   if (job) params.set('job', job);
   if (order === 'birthdays') params.set('day', calendarDay);
   if (next.page && next.page > 1) params.set('page', String(next.page));
@@ -95,7 +96,7 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
         <div class="contributor-directory-controls">
           <form action={pathname} method="get" data-contributor-filter aria-label="Filter contributors">
             <label>
-              <span>Ranking</span>
+              <span>{people ? 'Ranking' : 'Sort'}</span>
               <select name="sort">
                 {sorts.map(([key,label]) => <option value={key} selected={sort===key}>{label}</option>)}
               </select>
@@ -114,11 +115,11 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
             {people && <input type="hidden" name="day" value={calendarDay}/>}
             <noscript><button class="button-secondary" type="submit">Apply</button></noscript>
           </form>
-          {(birthday || !people) && <span>{birthday ? birthdayLabel : 'Ranked by credited works'}</span>}
+          {birthday && <span>{birthdayLabel}</span>}
         </div>
         {data.results.length > 0 && <ContributorBrowseGrid cards={data.results} {people} scope={scope==='all' && requestScope==='game' ? 'game' : scope} {job}/>}
         {failed ? <div class="empty-state"><h2>Unable to load {title.toLowerCase()}</h2><a class="button-secondary" href={href({page})} data-astro-reload>Try again</a></div> :
-          !data.results.length && <div class="empty-state"><h2>{birthday ? 'No known birthdays today' : 'No ranked results yet'}</h2></div>}
+          !data.results.length && <div class="empty-state"><h2>{birthday ? 'No known birthdays today' : people ? 'No ranked results yet' : 'No studios found'}</h2></div>}
         {!failed && (page > 1 || data.has_more && page < 100) && <nav class="browse-static-pages" aria-label="Result pages">
           {page > 1 && <a href={href({page:page-1})} rel="prev">Previous</a>}
           {data.has_more && page < 100 && <a href={href({page:page+1})} rel="next">Next</a>}
@@ -142,7 +143,7 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
   .contributor-directory-controls label { display:grid; gap:5px; font-size:13px; font-weight:600; }
   .contributor-directory-controls select {
     min-block-size:40px;
-    min-inline-size:10rem;
+    inline-size:11.5em;
     padding:8px 12px;
     border:0;
     border-radius:6px;
@@ -171,7 +172,6 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
   }
   @media (max-width:420px) {
     .contributor-directory-controls label { min-inline-size:0; }
-    .contributor-directory-controls select { min-inline-size:8.5rem; }
   }
 </style>
 <script>

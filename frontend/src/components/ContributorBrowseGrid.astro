@@ -47,7 +47,7 @@ const jobLabel = job && staffJobs.find(([key]) => key === job)?.[1];
   .directory-card:focus-visible { outline:none; }
   .directory-card:is(:hover,:focus-visible) .directory-name { color:var(--blue); }
   .directory-card:focus-visible .directory-art { background:var(--field); }
-  .directory-card:focus-visible img { opacity:.78; }
+  .contributor-directory-grid:not(.directory-studios) .directory-card:focus-visible img { opacity:.78; }
   .directory-art {
     display:grid;
     grid-template:minmax(0,1fr) / minmax(0,1fr);
@@ -60,7 +60,16 @@ const jobLabel = job && staffJobs.find(([key]) => key === job)?.[1];
   }
   .directory-art img { inline-size:100%; block-size:100%; object-fit:cover; border-radius:inherit; }
   .directory-studios .directory-art { aspect-ratio:4 / 3; }
-  .directory-studios .directory-art img { object-fit:contain; padding:18%; box-sizing:border-box; }
+  .directory-studios .directory-art img {
+    inline-size:84%;
+    block-size:76%;
+    object-fit:contain;
+    padding:6%;
+    box-sizing:border-box;
+    /* Mid-tone backing gives both black and white transparent marks contrast. */
+    background:#747b86;
+    border-radius:6px;
+  }
   .directory-name { font-weight:650; line-height:1.2; overflow-wrap:anywhere; }
   .directory-department { color:var(--muted); font-size:13px; }
   .directory-preview { grid-template-columns:repeat(6,minmax(0,1fr)); }

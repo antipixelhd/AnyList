@@ -25,19 +25,22 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
                 'game': CatalogueEntity(kind='person', name='Game Developer', attributes={'birthday': '1980-11-27'}),
                 'adult': CatalogueEntity(kind='person', name='Restricted Actor', attributes={'birthday': '1980-11-27'}),
                 'studio': CatalogueEntity(kind='organization', name='Shared Studio Inc.'),
+                'screen_studio': CatalogueEntity(kind='organization', name='Film & Series Studio'),
+                'game_studio': CatalogueEntity(kind='organization', name='Arcade Studio'),
             }
             works = {
                 'popular': CatalogueEntity(kind='movie', name='Popular Film', attributes={'vote_count': 1000, 'vote_average': 6}),
                 'rated': CatalogueEntity(kind='movie', name='Acclaimed Film', attributes={'vote_count': 100, 'vote_average': 9}),
                 'unranked': CatalogueEntity(kind='series', name='Unranked Series'),
-                'game': CatalogueEntity(kind='game', name='Game', attributes={
-                    'game_class': 'game', 'igdb_rating_count': 100, 'igdb_rating': 85}),
+                'game': CatalogueEntity(kind='game', name='Game', attributes={'game_class': 'game'}),
                 'adult': CatalogueEntity(kind='movie', name='Restricted Film', attributes={'adult': True, 'vote_count': 2000}),
             }
             db.add_all([*people.values(), *works.values()])
             await db.flush()
             alias = CatalogueEntity(kind='person', name='Alias', canonical_person_id=people['actor'].id)
-            db.add(alias)
+            studio_alias = CatalogueEntity(kind='organization', name='Shared Alias',
+                canonical_company_id=people['studio'].id)
+            db.add_all([alias, studio_alias])
             await db.flush()
             credits = [
                 (people['actor'], 'popular', 'actor', None, 199),
@@ -51,7 +54,11 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
                 (people['game'], 'game', 'writer', None, None),
                 (people['adult'], 'adult', 'actor', None, 500),
                 (people['studio'], 'popular', 'producer', None, None),
+                (studio_alias, 'popular', 'producer', None, None),
                 (people['studio'], 'game', 'developer', None, None),
+                (people['screen_studio'], 'rated', 'producer', None, None),
+                (people['screen_studio'], 'unranked', 'producer', None, None),
+                (people['game_studio'], 'game', 'publisher', None, None),
             ]
             db.add_all([CatalogueCredit(work_id=works[work].id, contributor_id=person.id, role=role, role_label=label,
                 provider='tmdb' if popularity is not None else 'fixture', source_key=str(index),
@@ -90,8 +97,15 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.names(game), ['Game Developer'])
         self.assertEqual(game.json()['results'][0]['domain'], 'game')
         self.assertEqual(game.headers['cache-control'], 'private, no-store')
-        self.assertEqual(self.names(await self.browse('studio')), ['Shared Studio'])
-        self.assertEqual(self.names(await self.browse('studio', scope='game')), ['Shared Studio'])
+        self.assertEqual(self.names(await self.browse('studio')),
+            ['Film & Series Studio', 'Shared Studio', 'Arcade Studio', 'Fixture Studio'])
+        alphabetical = await self.browse('studio', sort='name')
+        self.assertEqual(self.names(alphabetical),
+            ['Arcade Studio', 'Film & Series Studio', 'Fixture Studio', 'Shared Studio'])
+        self.assertEqual(alphabetical.json()['results'][0]['domain'], 'game')
+        self.assertEqual(self.names(await self.browse('studio', scope='game')), ['Arcade Studio', 'Shared Studio'])
+        self.assertEqual(self.names(await self.browse('studio', scope='series')), ['Film & Series Studio'])
+        self.assertEqual((await self.browse('studio', sort='score')).status_code, 422)
         self.viewer = None
         async with self.Session() as db:
             await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))

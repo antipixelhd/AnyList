@@ -420,8 +420,6 @@ def normalize_igdb(raw):
             attributes={
                 "game_class": igdb_game_class(raw),
                 **({'is_erotic': erotic_game(raw)} if 'themes' in raw else {}),
-                **{f'igdb_{key}': raw[key] for key in ('rating', 'rating_count')
-                   if type(raw.get(key)) in (int, float)},
                 **({'mobile_only':mobile_only(raw),'platform_evidence':raw['platforms']}
                    if raw.get('platforms') else {}),
                 "age_ratings": igdb_age_ratings(raw.get('age_ratings')),

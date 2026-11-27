@@ -1439,7 +1439,7 @@ async def contributor_directory(
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
     scope: Literal['all', 'screen', 'movie', 'series', 'game'] = 'all',
-    sort: Literal['popular', 'score', 'birthdays'] = 'popular',
+    sort: Literal['popular', 'birthdays', 'credits', 'name'] | None = None,
     page: Annotated[int, Query(ge=1, le=100)] = 1,
     day: Annotated[str | None, Query(pattern=r'^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')] = None,
     job: StaffJob | None = None,
@@ -1454,10 +1454,14 @@ async def contributor_directory(
         if viewer is None:
             raise HTTPException(401, 'Sign in to use Games')
         require(viewer)
-    if kind == 'studio' and sort == 'birthdays':
-        raise HTTPException(422, 'Birthdays are available for people')
-    if kind == 'staff' and sort == 'score':
-        raise HTTPException(422, 'People have popularity data, but no rating')
+    if kind == 'studio':
+        sort = sort or 'credits'
+        if sort not in ('credits', 'name'):
+            raise HTTPException(422, 'Studio sorting supports catalogue credits or name')
+    else:
+        sort = sort or 'popular'
+        if sort not in ('popular', 'birthdays'):
+            raise HTTPException(422, 'Staff sorting supports person popularity or birthdays')
     screen = tuple(domain for domain in ('movie', 'series') if scope in ('all', 'screen', domain))
     games = ('game',) if scope in ('all', 'game') and allowed(viewer) else ()
     response.headers['Cache-Control'] = 'private, no-store'
