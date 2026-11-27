@@ -13,13 +13,26 @@ const people = kind === 'staff';
 const title = people ? 'Staff' : 'Studios';
 const {pathname, searchParams} = Astro.url;
 const domains = await viewerMediaPreferences(Astro.locals);
-const choices = [
-  ...(domains.show_movies_series ? [['movie', 'Movies'], ['series', 'Series']] : []),
-  ...(domains.show_games ? [['game', 'Games']] : []),
-] as const;
-const scope = !people && choices.find(([key]) => key === searchParams.get('scope'))?.[0] || 'all';
+const hasMedia = domains.show_movies_series || domains.show_games;
+const showMediaTabs = domains.show_movies_series && domains.show_games;
+const mediaTabs = [['all', 'All media'], ['screen', 'Movies & Series'], ['game', 'Games']] as const;
+const scopes = [
+  'all',
+  ...(domains.show_movies_series ? people ? ['screen'] : ['screen', 'movie', 'series'] : []),
+  ...(domains.show_games ? ['game'] : []),
+];
+const scope = scopes.find(key => key === searchParams.get('scope')) ?? 'all';
 const requestScope = scope === 'all' && !domains.show_games ? 'screen' :
   scope === 'all' && !domains.show_movies_series ? 'game' : scope;
+const activeMediaTab = scope === 'all' || scope === 'game' ? scope : 'screen';
+const showStudioMediaFilter = !people && domains.show_movies_series && requestScope !== 'game';
+const studioMediaChoices = [
+  ...(showMediaTabs && scope === 'all' ? [['all', 'All media']] : []),
+  ['screen', 'Movies & Series'],
+  ['movie', 'Movies'],
+  ['series', 'Series'],
+];
+const studioMediaSelection = scope === 'all' && !showMediaTabs ? 'screen' : scope;
 const sorts = people ? staffRankings : studioRankings;
 const defaultSort = sorts[0][0];
 const sort = sorts.find(([key]) => key === searchParams.get('sort'))?.[0] || defaultSort;
@@ -35,11 +48,14 @@ const birthday = sort === 'birthdays';
 const birthdayLabel = new Date(`2000-${calendarDay}T00:00:00Z`).toLocaleDateString(
   requestDateLocale(Astro.request.headers.get('accept-language')), {month:'long', day:'numeric', timeZone:'UTC'});
 
-function href(next: {sort?: string; page?: number} = {}) {
+const landingHref = scope === 'all' ? pathname : `${pathname}?${new URLSearchParams({scope})}`;
+
+function href(next: {scope?: string; sort?: string; page?: number} = {}) {
   const params = new URLSearchParams();
+  const media = next.scope ?? scope;
   const order = next.sort ?? sort;
-  if (scope !== 'all') params.set('scope', scope);
-  if (people || order !== defaultSort) params.set('sort', order);
+  if (media !== 'all') params.set('scope', media);
+  if ((!landing || next.sort) && (people || order !== defaultSort)) params.set('sort', order);
   if (job) params.set('job', job);
   if (order === 'birthdays') params.set('day', calendarDay);
   if (next.page && next.page > 1) params.set('page', String(next.page));
@@ -57,7 +73,7 @@ async function load(order: string, preview = false): Promise<ContributorBrowseRe
 let sections: PromiseSettledResult<ContributorBrowseResults>[] = [];
 let data: ContributorBrowseResults = {results: [], has_more: false};
 let failed = false;
-if (choices.length) {
+if (hasMedia) {
   if (landing) {
     sections = await Promise.allSettled(staffRankings.map(([key]) => load(key, true)));
     if (sections.every(section => section.status === 'rejected')) Astro.response.status = 503;
@@ -75,9 +91,14 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
 <Tracker {title}>
   <section class="page-width browse-page contributor-directory" data-contributor-directory data-birthday={birthday || landing ? calendarDay : undefined}>
     <header class="browse-header">
-      <h1>{people && !landing ? <a href={pathname}>Staff</a> : title}</h1>
+      <h1>{people && !landing ? <a href={landingHref}>Staff</a> : title}</h1>
+      {showMediaTabs && <nav class="browse-types directory-media-tabs" aria-label="Browse by media">
+        {mediaTabs.map(([key, label]) => (
+          <a href={href({scope:key})} aria-current={key===activeMediaTab ? 'page' : undefined}>{label}</a>
+        ))}
+      </nav>}
     </header>
-    {!choices.length ? <div class="empty-state"><h2>Enable a media type to browse</h2><a class="button-secondary" href="/settings/lists">List settings</a></div> :
+    {!hasMedia ? <div class="empty-state"><h2>Enable a media type to browse</h2><a class="button-secondary" href="/settings/lists">List settings</a></div> :
       landing ? <div class="directory-sections">
         {staffRankings.map(([key, label], index) => {
           const section = sections[index];
@@ -106,18 +127,19 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
               <select name="job">
                 {staffJobs.map(([key,label]) => <option value={key} selected={job===key}>{label}</option>)}
               </select>
-            </label> : choices.length > 1 && <label>
+            </label> : showStudioMediaFilter && <label>
               <span>Media type</span>
               <select name="scope">
-                {[['all','All media'], ...choices].map(([key,label]) => <option value={key} selected={scope===key}>{label}</option>)}
+                {studioMediaChoices.map(([key,label]) => <option value={key} selected={studioMediaSelection===key}>{label}</option>)}
               </select>
             </label>}
+            {!showStudioMediaFilter && scope !== 'all' && <input type="hidden" name="scope" value={scope}/>}
             {people && <input type="hidden" name="day" value={calendarDay}/>}
             <noscript><button class="button-secondary" type="submit">Apply</button></noscript>
           </form>
           {birthday && <span>{birthdayLabel}</span>}
         </div>
-        {data.results.length > 0 && <ContributorBrowseGrid cards={data.results} {people} scope={scope==='all' && requestScope==='game' ? 'game' : scope} {job}/>}
+        {data.results.length > 0 && <ContributorBrowseGrid cards={data.results} {people} scope={requestScope} {job}/>}
         {failed ? <div class="empty-state"><h2>Unable to load {title.toLowerCase()}</h2><a class="button-secondary" href={href({page})} data-astro-reload>Try again</a></div> :
           !data.results.length && <div class="empty-state"><h2>{birthday ? 'No known birthdays today' : people ? 'No ranked results yet' : 'No studios found'}</h2></div>}
         {!failed && (page > 1 || data.has_more && page < 100) && <nav class="browse-static-pages" aria-label="Result pages">
@@ -130,6 +152,9 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
 <style>
   .contributor-directory .browse-header { margin-block-end:22px; }
   .contributor-directory .browse-header a:focus-visible { outline:none; color:var(--blue); }
+  .directory-media-tabs { flex-wrap:wrap; }
+  .directory-media-tabs a { padding-inline:clamp(8px, 2vw, 18px); }
+  .directory-media-tabs a:focus-visible { outline:none; background:var(--field); color:var(--text); }
   .directory-sections > .browse-category:first-child > header { min-height:0; align-items:center; }
   .contributor-directory-controls,
   .contributor-directory-controls form {
