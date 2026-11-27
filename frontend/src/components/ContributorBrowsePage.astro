@@ -1,39 +1,29 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
-import Icon from './Icon.astro';
-import BrowseContributorLinks from './BrowseContributorLinks.astro';
+import ContributorBrowseGrid from './ContributorBrowseGrid.astro';
+import {staffJobs, staffRankings, studioRankings, type ContributorBrowseResults} from '../lib/contributor-browse';
 import {requestDateLocale} from '../lib/date-time';
-import {tracker, artwork, trackerFailure} from '../lib/tracker';
+import {tracker, trackerFailure} from '../lib/tracker';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import '../styles/browse.css';
 
 interface Props { kind: 'staff' | 'studio' }
-interface Card {
-  key: string;
-  name: string;
-  image: string | null;
-  department: string | null;
-  domain: 'movie' | 'series' | 'game' | null;
-}
 const {kind} = Astro.props;
 const people = kind === 'staff';
 const title = people ? 'Staff' : 'Studios';
-const icon = people ? 'user' : 'building';
 const {pathname, searchParams} = Astro.url;
 const domains = await viewerMediaPreferences(Astro.locals);
 const choices = [
   ...(domains.show_movies_series ? [['movie', 'Movies'], ['series', 'Series']] : []),
   ...(domains.show_games ? [['game', 'Games']] : []),
 ] as const;
-const scope = choices.find(([key]) => key === searchParams.get('scope'))?.[0] || 'all';
+const scope = !people && choices.find(([key]) => key === searchParams.get('scope'))?.[0] || 'all';
 const requestScope = scope === 'all' && !domains.show_games ? 'screen' :
   scope === 'all' && !domains.show_movies_series ? 'game' : scope;
-const sorts = [
-  ['popular', 'Most popular'],
-  ['score', 'Highest rated'],
-  ...(people ? [['birthdays', 'Birthdays today']] : []),
-];
+const sorts = people ? staffRankings : studioRankings;
 const sort = sorts.find(([key]) => key === searchParams.get('sort'))?.[0] || 'popular';
+const job = people ? staffJobs.find(([key]) => key === searchParams.get('job'))?.[0] || '' : '';
+const landing = people && !['sort', 'job', 'page'].some(key => searchParams.has(key));
 const requestedPage = Number(searchParams.get('page'));
 const page = Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 100 ? requestedPage : 1;
 const utcToday = new Date().toISOString().slice(5, 10);
@@ -43,139 +33,175 @@ const calendarDay = requestedDay && /^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/
 const birthday = sort === 'birthdays';
 const birthdayLabel = new Date(`2000-${calendarDay}T00:00:00Z`).toLocaleDateString(
   requestDateLocale(Astro.request.headers.get('accept-language')), {month:'long', day:'numeric', timeZone:'UTC'});
-const href = (next: {scope?: string; sort?: string; page?: number} = {}) => {
+
+function href(next: {sort?: string; page?: number} = {}) {
   const params = new URLSearchParams();
-  const media = next.scope ?? scope;
   const order = next.sort ?? sort;
-  if (media !== 'all') params.set('scope', media);
-  if (order !== 'popular') params.set('sort', order);
+  if (scope !== 'all') params.set('scope', scope);
+  if (people || order !== 'popular') params.set('sort', order);
+  if (job) params.set('job', job);
   if (order === 'birthdays') params.set('day', calendarDay);
   if (next.page && next.page > 1) params.set('page', String(next.page));
   return pathname + (params.size ? '?' + params : '');
-};
-let data: {results: Card[]; has_more: boolean} = {results: [], has_more: false};
+}
+
+async function load(order: string, preview = false): Promise<ContributorBrowseResults> {
+  const params = new URLSearchParams({scope:requestScope, sort:order, page:String(page)});
+  if (order === 'birthdays') params.set('day', calendarDay);
+  if (job) params.set('job', job);
+  if (preview) params.set('preview', 'true');
+  return tracker(`browse/contributors/${kind}?${params}`, Astro.locals.token);
+}
+
+let sections: PromiseSettledResult<ContributorBrowseResults>[] = [];
+let data: ContributorBrowseResults = {results: [], has_more: false};
 let failed = false;
 if (choices.length) {
-  const params = new URLSearchParams({scope:requestScope, sort, page:String(page)});
-  if (birthday) params.set('day', calendarDay);
-  try {
-    data = await tracker(`browse/contributors/${kind}?${params}`, Astro.locals.token);
-  } catch (cause) {
-    failed = true;
-    Astro.response.status = trackerFailure(cause).status;
+  if (landing) {
+    sections = await Promise.allSettled(staffRankings.map(([key]) => load(key, true)));
+    if (sections.every(section => section.status === 'rejected')) Astro.response.status = 503;
+  } else {
+    try {
+      data = await load(sort);
+    } catch (cause) {
+      failed = true;
+      Astro.response.status = trackerFailure(cause).status;
+    }
   }
 }
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 ---
 <Tracker {title}>
-  <section class="page-width browse-page contributor-directory" data-contributor-directory data-birthday={birthday ? calendarDay : undefined}>
+  <section class="page-width browse-page contributor-directory" data-contributor-directory data-birthday={birthday || landing ? calendarDay : undefined}>
     <header class="browse-header">
-      <h1>{title}</h1>
-      {choices.length > 1 && <nav class="browse-types contributor-directory-scope" aria-label="Media type">
-        {[['all','All'], ...choices].map(([key,label]) => (
-          <a href={href({scope:key})} aria-current={scope===key ? 'page' : undefined}>{label}</a>
-        ))}
-      </nav>}
+      <h1>{people && !landing ? <a href={pathname}>Staff</a> : title}</h1>
     </header>
-    <BrowseContributorLinks/>
-    <div class="contributor-directory-controls">
-      <nav class="browse-view-switch" aria-label="Sort contributors">
-        {sorts.map(([key,label]) => (
-          <a href={href({sort:key})} aria-current={sort===key ? 'page' : undefined}>{label}</a>
-        ))}
-      </nav>
-      <span>{birthday ? birthdayLabel : 'Ranked by credited works'}</span>
-    </div>
-    {data.results.length > 0 && <ul class:list={['contributor-directory-grid', {'directory-studios':!people}]}>
-      {data.results.map((card, index) => {
-        const image = artwork(card.image, 'w342', 'direct');
-        const type = scope === 'all' ? card.domain : scope;
-        const detail = `/${people ? 'person' : 'studio'}/${card.key}${type ? '?media_type='+type : ''}`;
-        return <li>
-          <a href={detail} class="directory-card">
-            <div class="directory-art">
-              {image ? <img src={image} alt="" loading={index < 6 ? 'eager' : 'lazy'} decoding="async"/> : <Icon name={icon}/>}
-            </div>
-            <span class="directory-name">{card.name}</span>
-            {people && card.department && <span class="directory-department">{card.department}</span>}
-          </a>
-        </li>;
-      })}
-    </ul>}
-    {failed ? <div class="empty-state"><h2>Unable to load {title.toLowerCase()}</h2><a class="button-secondary" href={href({page})} data-astro-reload>Try again</a></div> :
-      !data.results.length && <div class="empty-state"><h2>{!choices.length ? 'Enable a media type to browse' : birthday ? 'No known birthdays today' : 'No ranked results yet'}</h2>
-        {!choices.length && <a class="button-secondary" href="/settings/lists">List settings</a>}
-      </div>}
-    {!failed && (page > 1 || data.has_more && page < 100) && <nav class="browse-static-pages" aria-label="Result pages">
-      {page > 1 && <a href={href({page:page-1})} rel="prev">Previous</a>}
-      {data.has_more && page < 100 && <a href={href({page:page+1})} rel="next">Next</a>}
-    </nav>}
+    {!choices.length ? <div class="empty-state"><h2>Enable a media type to browse</h2><a class="button-secondary" href="/settings/lists">List settings</a></div> :
+      landing ? <div class="directory-sections">
+        {staffRankings.map(([key, label], index) => {
+          const section = sections[index];
+          return <section class="browse-category">
+            <header>
+              <h2><a href={href({sort:key})}>{label}</a></h2>
+              <a href={href({sort:key})} aria-label={`View all ${label.toLowerCase()}`}>View all</a>
+            </header>
+            {section?.status === 'fulfilled' && section.value.results.length ?
+              <ContributorBrowseGrid cards={section.value.results} {people} scope={requestScope} preview eager={index===0}/> :
+              <p class="browse-category-empty">{section?.status === 'rejected' ? 'Unable to load results.' :
+                key === 'birthdays' ? 'No known birthdays today.' : 'No ranked results yet.'}</p>}
+          </section>;
+        })}
+      </div> : <>
+        <div class="contributor-directory-controls">
+          <form action={pathname} method="get" data-contributor-filter aria-label="Filter contributors">
+            <label>
+              <span>Ranking</span>
+              <select name="sort">
+                {sorts.map(([key,label]) => <option value={key} selected={sort===key}>{label}</option>)}
+              </select>
+            </label>
+            {people ? <label>
+              <span>Job</span>
+              <select name="job">
+                {staffJobs.map(([key,label]) => <option value={key} selected={job===key}>{label}</option>)}
+              </select>
+            </label> : choices.length > 1 && <label>
+              <span>Media type</span>
+              <select name="scope">
+                {[['all','All media'], ...choices].map(([key,label]) => <option value={key} selected={scope===key}>{label}</option>)}
+              </select>
+            </label>}
+            {people && <input type="hidden" name="day" value={calendarDay}/>}
+            <noscript><button class="button-secondary" type="submit">Apply</button></noscript>
+          </form>
+          {(birthday || !people) && <span>{birthday ? birthdayLabel : 'Ranked by credited works'}</span>}
+        </div>
+        {data.results.length > 0 && <ContributorBrowseGrid cards={data.results} {people} scope={scope==='all' && requestScope==='game' ? 'game' : scope} {job}/>}
+        {failed ? <div class="empty-state"><h2>Unable to load {title.toLowerCase()}</h2><a class="button-secondary" href={href({page})} data-astro-reload>Try again</a></div> :
+          !data.results.length && <div class="empty-state"><h2>{birthday ? 'No known birthdays today' : 'No ranked results yet'}</h2></div>}
+        {!failed && (page > 1 || data.has_more && page < 100) && <nav class="browse-static-pages" aria-label="Result pages">
+          {page > 1 && <a href={href({page:page-1})} rel="prev">Previous</a>}
+          {data.has_more && page < 100 && <a href={href({page:page+1})} rel="next">Next</a>}
+        </nav>}
+      </>}
   </section>
 </Tracker>
 <style>
-  .contributor-directory .browse-header { margin-block-end:12px; }
-  .contributor-directory-scope { flex-wrap:wrap; }
-  .contributor-directory-scope a:focus-visible { outline:none; background:var(--field); color:var(--text); }
-  .contributor-directory-controls {
+  .contributor-directory .browse-header { margin-block-end:22px; }
+  .contributor-directory .browse-header a:focus-visible { outline:none; color:var(--blue); }
+  .directory-sections > .browse-category:first-child > header { min-height:0; align-items:center; }
+  .contributor-directory-controls,
+  .contributor-directory-controls form {
     display:flex;
     flex-wrap:wrap;
-    align-items:center;
-    gap:10px 16px;
-    margin-block-end:24px;
-    color:var(--muted);
+    align-items:end;
+    gap:12px 16px;
   }
-  .contributor-directory-controls .browse-view-switch { flex-wrap:wrap; }
-  .contributor-directory-grid {
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
-    gap:24px 18px;
-    padding:0;
-    margin:0;
-    list-style:none;
-  }
-  .directory-card { display:grid; grid-template-columns:minmax(0,1fr); gap:7px; border-radius:8px; color:var(--text); }
-  .directory-card:focus-visible { outline:none; }
-  .directory-card:is(:hover,:focus-visible) .directory-name { color:var(--blue); }
-  .directory-card:focus-visible .directory-art { background:var(--field); }
-  .directory-card:focus-visible img { opacity:.78; }
-  .directory-art {
-    display:grid;
-    grid-template:minmax(0,1fr) / minmax(0,1fr);
-    place-items:center;
-    aspect-ratio:2 / 3;
-    border-radius:8px;
+  .contributor-directory-controls { margin-block-end:24px; color:var(--muted); }
+  .contributor-directory-controls > span { align-self:end; padding-block-end:10px; }
+  .contributor-directory-controls label { display:grid; gap:5px; font-size:13px; font-weight:600; }
+  .contributor-directory-controls select {
+    min-block-size:40px;
+    min-inline-size:10rem;
+    padding:8px 12px;
+    border:0;
+    border-radius:6px;
     background:var(--panel);
-    color:var(--muted);
-    font-size:28px;
+    color:var(--text);
+    color-scheme:dark;
+    cursor:pointer;
+    font:inherit;
+    font-size:14px;
   }
-  .directory-art img { inline-size:100%; block-size:100%; object-fit:cover; border-radius:inherit; }
-  .directory-studios .directory-art { aspect-ratio:4 / 3; }
-  .directory-studios .directory-art img { object-fit:contain; padding:18%; box-sizing:border-box; }
-  .directory-name { font-weight:650; line-height:1.2; overflow-wrap:anywhere; }
-  .directory-department { color:var(--muted); font-size:13px; }
-  @media (max-width:650px) {
-    .contributor-directory-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,115px),1fr)); gap:20px 12px; }
+  .contributor-directory-controls select:focus-visible { outline:none; background:var(--field); color:var(--blue); }
+  @supports (appearance:base-select) {
+    .contributor-directory-controls select,
+    .contributor-directory-controls select::picker(select) { appearance:base-select; }
+    .contributor-directory-controls select::picker(select) {
+      padding:4px;
+      border:0;
+      border-radius:6px;
+      background:var(--panel);
+      color:var(--text);
+      box-shadow:0 6px 20px rgb(3 13 24 / 40%);
+    }
+    .contributor-directory-controls option { padding:8px; border-radius:4px; }
+    .contributor-directory-controls option:is(:hover,:focus-visible) { outline:none; background:var(--field); }
+    .contributor-directory-controls option:checked { color:var(--blue); }
+  }
+  @media (max-width:420px) {
+    .contributor-directory-controls label { min-inline-size:0; }
+    .contributor-directory-controls select { min-inline-size:8.5rem; }
   }
 </style>
 <script>
+  import {navigate} from 'astro:transitions/client';
+
+  function today() {
+    const date = new Date();
+    return [date.getMonth()+1, date.getDate()].map(value => String(value).padStart(2,'0')).join('-');
+  }
+
   function syncBirthday() {
     const directory = document.querySelector<HTMLElement>('[data-contributor-directory]');
-    if (!directory) return;
-    const today = new Date();
-    const day = [today.getMonth()+1, today.getDate()].map(value => String(value).padStart(2,'0')).join('-');
-    if (directory.dataset.birthday && directory.dataset.birthday !== day) {
-      const url = new URL(location.href);
-      url.searchParams.set('day', day);
-      url.searchParams.delete('page');
-      location.replace(url);
-      return;
-    }
-    for (const link of directory.querySelectorAll<HTMLAnchorElement>('a[href*="sort=birthdays"]')) {
-      const url = new URL(link.href);
-      url.searchParams.set('day', day);
-      link.href = url.href;
-    }
+    if (!directory?.dataset.birthday || directory.dataset.birthday === today()) return;
+    const url = new URL(location.href);
+    url.searchParams.set('day', today());
+    url.searchParams.delete('page');
+    location.replace(url);
   }
+
+  document.addEventListener('change', event => {
+    if (!(event.target instanceof HTMLSelectElement)) return;
+    const form = event.target.form;
+    if (!form?.hasAttribute('data-contributor-filter')) return;
+    const params = new URLSearchParams();
+    for (const [key, value] of new FormData(form)) {
+      if (typeof value === 'string' && value && key !== 'day' && !(key === 'scope' && value === 'all')) params.set(key, value);
+    }
+    if (params.get('sort') === 'birthdays') params.set('day', today());
+    void navigate(form.action + (params.size ? '?' + params : ''));
+  });
   syncBirthday();
   document.addEventListener('astro:page-load', syncBirthday);
 </script>

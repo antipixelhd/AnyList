@@ -1,0 +1,85 @@
+---
+import Icon from './Icon.astro';
+import {artwork} from '../lib/tracker';
+import {staffJobs, type ContributorBrowseCard} from '../lib/contributor-browse';
+
+interface Props {
+  cards: ContributorBrowseCard[];
+  people: boolean;
+  scope: string;
+  job?: string;
+  preview?: boolean;
+  eager?: boolean;
+}
+const {cards, people, scope, job, preview, eager = true} = Astro.props;
+const jobLabel = job && staffJobs.find(([key]) => key === job)?.[1];
+---
+<ul class:list={['contributor-directory-grid', {'directory-studios':!people, 'directory-preview':preview}]}>
+  {cards.map((card, index) => {
+    const image = artwork(card.image, 'w342', 'direct');
+    const type = scope === 'all' ? card.domain : scope;
+    const params = new URLSearchParams();
+    if (type && type !== 'screen') params.set('media_type', type);
+    if (people && job) params.set('role', job === 'acting' ? 'actor' : 'staff');
+    const detail = `/${people ? 'person' : 'studio'}/${card.key}${params.size ? '?' + params : ''}`;
+    const department = people && (jobLabel || card.department);
+    return <li>
+      <a href={detail} class="directory-card">
+        <div class="directory-art">
+          {image ? <img src={image} alt="" loading={eager && index < 6 ? 'eager' : 'lazy'} decoding="async"/> : <Icon name={people ? 'user' : 'building'}/>}
+        </div>
+        <span class="directory-name">{card.name}</span>
+        {department && <span class="directory-department">{department}</span>}
+      </a>
+    </li>;
+  })}
+</ul>
+<style>
+  .contributor-directory-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
+    gap:24px 18px;
+    padding:0;
+    margin:0;
+    list-style:none;
+  }
+  .directory-card { display:grid; grid-template-columns:minmax(0,1fr); gap:7px; border-radius:8px; color:var(--text); }
+  .directory-card:focus-visible { outline:none; }
+  .directory-card:is(:hover,:focus-visible) .directory-name { color:var(--blue); }
+  .directory-card:focus-visible .directory-art { background:var(--field); }
+  .directory-card:focus-visible img { opacity:.78; }
+  .directory-art {
+    display:grid;
+    grid-template:minmax(0,1fr) / minmax(0,1fr);
+    place-items:center;
+    aspect-ratio:2 / 3;
+    border-radius:8px;
+    background:var(--panel);
+    color:var(--muted);
+    font-size:28px;
+  }
+  .directory-art img { inline-size:100%; block-size:100%; object-fit:cover; border-radius:inherit; }
+  .directory-studios .directory-art { aspect-ratio:4 / 3; }
+  .directory-studios .directory-art img { object-fit:contain; padding:18%; box-sizing:border-box; }
+  .directory-name { font-weight:650; line-height:1.2; overflow-wrap:anywhere; }
+  .directory-department { color:var(--muted); font-size:13px; }
+  .directory-preview { grid-template-columns:repeat(6,minmax(0,1fr)); }
+  @media (max-width:1050px) {
+    .directory-preview { grid-template-columns:repeat(5,minmax(0,1fr)); }
+    .directory-preview > li:nth-child(n+11) { display:none; }
+  }
+  @media (max-width:850px) {
+    .directory-preview { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .directory-preview > li:nth-child(n+9) { display:none; }
+  }
+  @media (max-width:650px) {
+    .contributor-directory-grid { gap:20px 12px; }
+    .contributor-directory-grid:not(.directory-preview) { grid-template-columns:repeat(auto-fill,minmax(min(100%,115px),1fr)); }
+    .directory-preview { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .directory-preview > li:nth-child(n+7) { display:none; }
+  }
+  @media (max-width:420px) {
+    .directory-preview { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .directory-preview > li:nth-child(n+5) { display:none; }
+  }
+</style>

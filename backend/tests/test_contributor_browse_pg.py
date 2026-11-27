@@ -20,6 +20,8 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
                 'crew': CatalogueEntity(kind='person', name='Screen Director', attributes={'birthday': '1980-11-27'}),
                 'unranked': CatalogueEntity(kind='person', name='Unranked Actor', attributes={'birthday': '1990-11-27'}),
                 'partial': CatalogueEntity(kind='person', name='Partial Date', attributes={'birthday': '1980-11'}),
+                'composer': CatalogueEntity(kind='person', name='Composer', attributes={'known_for_department': 'Sound'}),
+                'sound': CatalogueEntity(kind='person', name='Sound Designer', attributes={'known_for_department': 'Sound'}),
                 'game': CatalogueEntity(kind='person', name='Game Developer', attributes={'birthday': '1980-11-27'}),
                 'adult': CatalogueEntity(kind='person', name='Restricted Actor', attributes={'birthday': '1980-11-27'}),
                 'studio': CatalogueEntity(kind='organization', name='Shared Studio Inc.'),
@@ -38,15 +40,22 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
             db.add(alias)
             await db.flush()
             credits = [
-                (people['actor'], 'popular', 'actor'), (alias, 'popular', 'director'),
-                (people['crew'], 'rated', 'director'), (people['partial'], 'rated', 'actor'),
-                (people['unranked'], 'unranked', 'actor'), (people['game'], 'game', 'writer'),
-                (people['adult'], 'adult', 'actor'), (people['studio'], 'popular', 'producer'),
-                (people['studio'], 'game', 'developer'),
+                (people['actor'], 'popular', 'actor', None, 199),
+                (alias, 'popular', 'director', None, 50),
+                (people['crew'], 'rated', 'director', None, 75),
+                (people['partial'], 'rated', 'actor', None, 35),
+                (people['composer'], 'rated', 'contributor', 'Original Music Composer', 15),
+                (people['sound'], 'rated', 'contributor', 'Sound Designer', 25),
+                (people['unranked'], 'unranked', 'actor', None, None),
+                (people['game'], 'game', 'writer', None, None),
+                (people['adult'], 'adult', 'actor', None, 500),
+                (people['studio'], 'popular', 'producer', None, None),
+                (people['studio'], 'game', 'developer', None, None),
             ]
-            db.add_all([CatalogueCredit(work_id=works[work].id, contributor_id=person.id, role=role,
-                provider='fixture', source_key=str(index), attributes={'principal': True})
-                for index, (person, work, role) in enumerate(credits)])
+            db.add_all([CatalogueCredit(work_id=works[work].id, contributor_id=person.id, role=role, role_label=label,
+                provider='tmdb' if popularity is not None else 'fixture', source_key=str(index),
+                attributes={'popularity': popularity} if popularity is not None else {})
+                for index, (person, work, role, label, popularity) in enumerate(credits)])
             await db.commit()
 
     async def asyncTearDown(self):
@@ -60,20 +69,23 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
         return [item['name'] for item in response.json()['results']]
 
     async def test_shared_people_ranking_and_birthday_coverage(self):
-        self.assertEqual(self.names(await self.browse(scope='movie')),
-            ['Screen Actor', 'Partial Date', 'Screen Director'])
-        self.assertEqual(self.names(await self.browse(scope='movie', sort='score')),
-            ['Partial Date', 'Screen Director', 'Screen Actor'])
+        self.assertEqual(self.names(await self.browse()),
+            ['Screen Director', 'Screen Actor', 'Partial Date', 'Sound Designer', 'Composer'])
+        self.assertEqual((await self.browse(sort='score')).status_code, 422)
         self.assertEqual(self.names(await self.browse(sort='birthdays', day='11-27')),
-            ['Screen Actor', 'Screen Director', 'Unranked Actor'])
+            ['Screen Director', 'Screen Actor', 'Unranked Actor'])
         self.assertEqual(self.names(await self.browse(sort='birthdays', day='11-28')), [])
+        self.assertEqual(self.names(await self.browse(job='music')), ['Composer'])
+        self.assertEqual(self.names(await self.browse(job='directing')), ['Screen Director', 'Screen Actor'])
+        self.assertEqual(self.names(await self.browse(job='acting', sort='birthdays', day='11-27')),
+            ['Screen Actor', 'Unranked Actor'])
 
     async def test_games_scope_and_canonical_studio_across_domains(self):
         self.viewer = None
         self.assertEqual((await self.browse(scope='game')).status_code, 401)
-        self.assertNotIn('Game Developer', self.names(await self.browse()))
+        self.assertNotIn('Game Developer', self.names(await self.browse(sort='birthdays', day='11-27')))
         self.viewer = SimpleNamespace(id=self.user_id, games_access=True)
-        game = await self.browse(scope='game')
+        game = await self.browse(scope='game', sort='birthdays', day='11-27', job='writing')
         self.assertEqual(self.names(game), ['Game Developer'])
         self.assertEqual(game.json()['results'][0]['domain'], 'game')
         self.assertEqual(game.headers['cache-control'], 'private, no-store')

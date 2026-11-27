@@ -3,6 +3,7 @@ from core.api_roles import reader
 from core.profile_images import background_url as profile_background_url
 import asyncio
 from core.catalog_search import result_filters, browse_preferences
+from core.contributor_browse import StaffJob
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1441,6 +1442,8 @@ async def contributor_directory(
     sort: Literal['popular', 'score', 'birthdays'] = 'popular',
     page: Annotated[int, Query(ge=1, le=100)] = 1,
     day: Annotated[str | None, Query(pattern=r'^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')] = None,
+    job: StaffJob | None = None,
+    preview: bool = False,
 ) -> dict:
     from core.contributor_browse import browse_contributors
     from core.game_access import allowed, require
@@ -1453,10 +1456,13 @@ async def contributor_directory(
         require(viewer)
     if kind == 'studio' and sort == 'birthdays':
         raise HTTPException(422, 'Birthdays are available for people')
+    if kind == 'staff' and sort == 'score':
+        raise HTTPException(422, 'People have popularity data, but no rating')
     screen = tuple(domain for domain in ('movie', 'series') if scope in ('all', 'screen', domain))
     games = ('game',) if scope in ('all', 'game') and allowed(viewer) else ()
     response.headers['Cache-Control'] = 'private, no-store'
     return await browse_contributors(db, kind=kind, domains=screen + games, sort=sort, page=page, day=day,
+        job=job if kind == 'staff' else None, preview=preview,
         show_anime=await anime_is_visible(db) if screen else True,
         hide_erotic=await hide_erotic_games(db, viewer.id) if games else True)
 
