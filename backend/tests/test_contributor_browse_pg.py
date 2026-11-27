@@ -42,6 +42,7 @@ class ContributorBrowseTests(unittest.IsolatedAsyncioTestCase):
             credits = [
                 (people['actor'], 'popular', 'actor', None, 199),
                 (alias, 'popular', 'director', None, 50),
+                (people['actor'], 'rated', 'soundtrack', 'Soundtrack', 50),
                 (people['crew'], 'rated', 'director', None, 75),
                 (people['partial'], 'rated', 'actor', None, 35),
                 (people['composer'], 'rated', 'contributor', 'Original Music Composer', 15),

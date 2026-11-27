@@ -24,9 +24,8 @@ JOBS = {
     'directing': ROLE_GROUPS[1],
     'writing': ROLE_GROUPS[0] + ROLE_GROUPS[2],
     'producing': ROLE_GROUPS[-1] + ('co-producer', 'associate producer', 'line producer'),
-    'music': ROLE_GROUPS[3] + ('composers', 'music', 'score', 'original score',
-        'music by', 'additional music', 'music supervisor', 'music department', 'music editor',
-        'songwriter', 'soundtrack'),
+    'music': ROLE_GROUPS[3] + ('composers', 'score', 'original score', 'music by',
+        'music composed by', 'additional music', 'orchestrator', 'music supervisor', 'music editor'),
     'cinematography': ROLE_GROUPS[4],
     'editing': ROLE_GROUPS[5],
 }
