@@ -1824,6 +1824,22 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
 
+    async def test_list_counts_are_private_and_survive_unrelated_changes(self):
+        self.assertFalse((await self.client.get('/tracking/preferences')).json()['show_list_counts'])
+        enabled = await self.client.patch('/tracking/preferences', json={'show_list_counts': True})
+        self.assertEqual(enabled.status_code, 200, enabled.text)
+        self.assertTrue(enabled.json()['show_list_counts'])
+        unrelated = await self.client.patch('/tracking/preferences', json={'default_sort': 'score'})
+        self.assertTrue(unrelated.json()['show_list_counts'])
+        self.viewer = self.friend
+        self.assertFalse((await self.client.get('/tracking/preferences')).json()['show_list_counts'])
+        self.viewer = self.owner
+        self.assertTrue((await self.client.get('/tracking/preferences')).json()['show_list_counts'])
+        invalid = await self.client.patch('/tracking/preferences', json={'show_list_counts': None})
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        disabled = await self.client.patch('/tracking/preferences', json={'show_list_counts': False})
+        self.assertFalse(disabled.json()['show_list_counts'])
+
     async def test_specials_visibility_is_saved_per_viewer_and_survives_unrelated_changes(self):
         disabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': False})
         self.assertEqual(disabled.status_code, 200, disabled.text)

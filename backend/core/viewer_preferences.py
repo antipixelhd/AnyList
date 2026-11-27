@@ -12,6 +12,7 @@ def preference_data(row, settings):
         'auto_confirm': bool(row and row.auto_confirm),
         'auto_approve_uncertain_resume': bool(settings and (settings.preferences or {}).get('auto_approve_uncertain_resume') is True),
         'watch_state_sync': (settings.preferences or {}).get('watch_state_sync', 'conservative') if settings else 'conservative',
+        'show_list_counts': bool(settings and (settings.preferences or {}).get('show_list_counts') is True),
         'combine_lists': True if row is None else row.combine_lists,
         'show_movies_series': True if row is None else row.show_movies_series,
         'show_games': True if row is None else row.show_games,

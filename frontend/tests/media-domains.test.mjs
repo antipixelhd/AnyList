@@ -25,3 +25,12 @@ test('another profile never grants a viewer Games access',()=>{
   assert.equal(profileMediaDomains(false,viewer).show_games,false);
   assert.deepEqual(domainListLinks('/user/sam',profileMediaDomains(false,viewer)).map(row=>row.href),['/user/sam/list']);
 });
+
+test('list counts default off and follow the viewer across profiles',()=>{
+  assert.equal(mediaDomains(null).show_list_counts,false);
+  for(const enabled of [true,false]){
+    const viewer=mediaDomains({show_list_counts:enabled});
+    assert.equal(profileMediaDomains(true,viewer).show_list_counts,enabled);
+    assert.equal(profileMediaDomains(false,viewer).show_list_counts,enabled);
+  }
+});

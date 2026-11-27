@@ -29,9 +29,9 @@ const showAchievements=preferences.show_game_achievements;
       <ProfileListFilters categoryPresentation={categoryPresentation} categoryOwner={owner} statuses={resolvedStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
 
       <div class="list-content">
-        <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
+        <div class="list-toolbar">{preferences.show_list_counts && <span class="list-total-count"><span data-list-visible-total>{data.total}</span> games</span>}<span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
         <div id="entry-groups" class="game-entry-groups" data-game-groups>
-          {resolvedStatuses.map(([status,label]:readonly [string,string])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-list-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
+          {resolvedStatuses.map(([status,label]:readonly [string,string])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-list-group={status} hidden={!data.group_counts[status]}><h2><span data-category-heading-label>{label}</span>{preferences.show_list_counts && <span class="list-category-count" data-list-group-count={status}>{data.group_counts[status]||0}</span>}</h2><div class="entry-table">
             <ProfileListTableHead game {showAchievements}/>
             <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0};--list-seeded-rows:${rows.length}`}><GameListRows entries={rows} {owner} {showAchievements}/></div>
           </div></section>})}

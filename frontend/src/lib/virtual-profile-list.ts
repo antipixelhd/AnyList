@@ -159,6 +159,8 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     root.dataset.listTotal=String(total);root.dataset.listCounts=JSON.stringify(counts);
     root.dataset.statusCounts=JSON.stringify(data.status_counts);
     root.querySelectorAll<HTMLElement>('[data-list-status-count]').forEach(node=>node.textContent=String(node.dataset.listStatusCount==='all'?Object.values(data.status_counts).reduce((a,b)=>a+b,0):data.status_counts[node.dataset.listStatusCount!]||0));
+    root.querySelectorAll<HTMLElement>('[data-list-group-count]').forEach(node=>node.textContent=String(counts[node.dataset.listGroupCount!]||0));
+    root.querySelectorAll<HTMLElement>('[data-list-visible-total]').forEach(node=>node.textContent=String(total));
     root.querySelector('.list-toolbar [aria-live]')!.textContent=`${total} entries`;
     root.querySelector<HTMLElement>('#list-empty')!.hidden=total!==0;
     groups.forEach(group=>{const count=counts[group.dataset.listWindow!]||0;group.style.setProperty('--list-rows',String(count));group.closest<HTMLElement>('[data-list-group]')!.hidden=!count;});
@@ -441,7 +443,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       }
       const section = sections?.querySelector<HTMLElement>(`[data-list-group="${category.id}"]`);
       if (section) {
-        section.querySelector('h2')!.textContent = category.label;
+        section.querySelector('[data-category-heading-label]')!.textContent = category.label;
         sections!.append(section);
       }
     }

@@ -135,6 +135,7 @@ class PreferencePatch(BaseModel):
     show_movies_series: bool | None = None
     show_games: bool | None = None
     show_game_achievements: bool | None = None
+    show_list_counts: bool | None = None
     hide_erotic_games: bool | None = None
     default_sort: Literal['title', 'score', 'progress', 'updated'] | None = None
     low_priority_notifications: bool | None = None
@@ -171,7 +172,7 @@ async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTas
     from core.game_browse_policy import AI_KEYWORDS, DEFAULTS
     from models.users import UserSettings
 
-    json_fields = {'include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',
+    json_fields = {'show_list_counts','include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',
         'auto_approve_uncertain_resume',*DEFAULTS,*AI_KEYWORDS}
     changes = body.model_dump(exclude_unset=True)
     for name, value in changes.items():

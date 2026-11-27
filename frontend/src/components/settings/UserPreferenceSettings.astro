@@ -207,6 +207,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
           <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
         </label>
+        <label class="setting-switch-row" for="show-list-counts"><span><strong>Show list counts</strong><small>Show category counts on all lists you view, with a total on desktop.</small></span><input id="show-list-counts" type="checkbox" checked={trackingPrefs.show_list_counts === true}/></label>
         <label class="setting-switch-row" for="show-game-achievements"><span><strong>Show game achievements</strong></span><input id="show-game-achievements" type="checkbox" checked={trackingPrefs.show_game_achievements}/></label>
         <div class="settings-inline-grid settings-single-column">
           <label>Default list sorting
@@ -626,7 +627,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         if (control.reportValidity()) saveTrackingPreferences({[control.id]: checkbox ? control.checked : control.valueAsNumber}, control, control.id);
       });
     }
-    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games'],['auto-approve-uncertain-resume','auto_approve_uncertain_resume']]){
+    for(const [id,field] of [['show-list-counts','show_list_counts'],['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games'],['auto-approve-uncertain-resume','auto_approve_uncertain_resume']]){
       const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
       control.dataset.savedValue=String(control.checked);
       control.addEventListener('change',()=>saveTrackingPreferences({[field]:control.checked},control,field));

@@ -759,3 +759,24 @@
 @media(max-width:650px) {
   .profile-background { width:calc(220px * var(--profile-background-aspect)); left:50%; right:auto; translate:-50% 0; max-width:none; }
 }
+
+/* Counts occupy existing heading/toolbar space without moving list controls. */
+.status-section h2 { position:relative }
+.status-section h2 > span, .list-total-count > span { font:inherit }
+.list-category-count {
+  position:absolute;
+  top:0;
+  right:18px;
+  color:var(--text-secondary);
+  font-variant-numeric:tabular-nums;
+  font-weight:400;
+}
+.list-total-count {
+  color:var(--text-secondary);
+  font-size:var(--type-section-size);
+  font-variant-numeric:tabular-nums;
+}
+@media(max-width:650px) {
+  .list-total-count { display:none }
+  .list-category-count { right:10px }
+}
