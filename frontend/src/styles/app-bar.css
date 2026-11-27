@@ -55,21 +55,43 @@ html.appbar-nav-transition-cursor {
   transition-delay:0s;
 }
 .appbar-browse-categories,
+.appbar-browse-contributors,
 .appbar-browse-shortcuts {
   margin:0;
   padding:0;
   list-style:none;
 }
-.appbar-browse-categories {
-  display:grid;
-  gap:15px;
-  padding:18px 22px;
+.appbar-browse-panel {
   max-inline-size:calc(100vw - 24px);
   white-space:normal;
   border-radius:8px;
   background:var(--panel);
   box-shadow:0 6px 20px rgb(3 13 24 / 40%);
 }
+.appbar-browse-categories {
+  display:grid;
+  gap:15px;
+  padding:18px 22px;
+}
+.appbar-browse-contributors:not([hidden]) {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:4px;
+  padding:7px 14px;
+  border-radius:0 0 8px 8px;
+  background:color-mix(in srgb,var(--panel),var(--background,#0b1622) 48%);
+}
+.appbar-browse-contributors a {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-block-size:36px;
+  padding-inline:8px;
+  color:var(--muted);
+  font-size:13px;
+  font-weight:650;
+}
+.appbar-browse-contributors a[aria-current=page] { background:var(--field); }
 .appbar-browse-category {
   --browse-icon-column:20px;
   --browse-label-gap:12px;

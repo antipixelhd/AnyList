@@ -1,3 +1,5 @@
+import {browseContributorRoute} from './browse-navigation.ts';
+
 export type MobileNavigationItem = {
   label: string;
   icon: string;
@@ -24,7 +26,7 @@ export function appMobileNavigation({profile, pathname, signedIn, combineLists,s
       {id: 'split-lists', label: 'Lists', icon: 'list', group: 'lists', active: ['list','movies','series','games'].some(section=>pathname===`${profile}/${section}`), hidden: !showMoviesSeries||combineLists&&!showGames},
     ] : []),
     {id: 'browse', label: 'Browse', icon: 'browse', href: !showMoviesSeries&&showGames?'/browse/games':'/browse',
-      active: pathname === '/browse'||pathname === '/browse/games'},
+      active: pathname === '/browse'||pathname === '/browse/games'||browseContributorRoute(pathname)},
     {label: 'Search', icon: 'search', ...(signedIn ? {action: 'search' as const} : {href: '/search'})},
     ...(signedIn ? [
       {label: 'Profile', icon: 'user', href: profile, active: pathname === profile || pathname === `${profile}/`},

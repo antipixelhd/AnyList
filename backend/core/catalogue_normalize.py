@@ -155,6 +155,7 @@ def normalize_tmdb(raw, kind):
             attributes={
                 "release_date": raw.get("release_date") or raw.get("first_air_date"),
                 "runtime": raw.get("runtime"),
+                **({'adult': raw['adult']} if isinstance(raw.get('adult'), bool) else {}),
                 **(movie_financials(raw) if kind == 'movie' else {}),
                 **{k: raw[k] for k in ('vote_count', 'vote_average') if raw.get(k) is not None},
                 "origin_countries": raw.get("origin_country"),
@@ -405,6 +406,7 @@ def igdb_steam_identities(raw):
 
 
 def normalize_igdb(raw):
+    from core.game_content import erotic_game
     from core.game_release_dates import game_release, release
     from core.game_store_source import igdb_age_ratings
     from core.game_types import igdb_game_class, platform_group, game_platforms, mobile_only
@@ -417,6 +419,9 @@ def normalize_igdb(raw):
             artwork=raw.get("cover"),
             attributes={
                 "game_class": igdb_game_class(raw),
+                **({'is_erotic': erotic_game(raw)} if 'themes' in raw else {}),
+                **{f'igdb_{key}': raw[key] for key in ('rating', 'rating_count')
+                   if type(raw.get(key)) in (int, float)},
                 **({'mobile_only':mobile_only(raw),'platform_evidence':raw['platforms']}
                    if raw.get('platforms') else {}),
                 "age_ratings": igdb_age_ratings(raw.get('age_ratings')),

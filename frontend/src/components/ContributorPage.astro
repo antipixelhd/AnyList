@@ -29,10 +29,10 @@ const domains = await viewerMediaPreferences(Astro.locals);
 if (!hasMediaChoice && !domains.show_movies_series && domains.show_games) params.set('media_type','game');
 const view = Astro.url.searchParams.get('view') === 'grid' ? 'grid' : 'timeline';
 const endpoint = `contributors/${isPerson ? 'person' : 'studio'}/${encodeURIComponent(key || '')}`;
-const loadPage=(query:URLSearchParams)=>{
+const loadPage=(query:URLSearchParams):Promise<ContributorPage>=>{
   const initialParams=new URLSearchParams(query);
   initialParams.set('include_tab_snapshot','true');
-  return tracker<ContributorPage>(`${endpoint}?${initialParams}`,Astro.locals.token);
+  return tracker(`${endpoint}?${initialParams}`,Astro.locals.token);
 };
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 let data: ContributorPage | null = null, error = '';

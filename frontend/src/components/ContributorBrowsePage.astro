@@ -1,0 +1,180 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+import Icon from './Icon.astro';
+import BrowseContributorLinks from './BrowseContributorLinks.astro';
+import {requestDateLocale} from '../lib/date-time';
+import {tracker, artwork, trackerFailure} from '../lib/tracker';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import '../styles/browse.css';
+
+interface Props { kind: 'staff' | 'studio' }
+interface Card {
+  key: string;
+  name: string;
+  image: string | null;
+  department: string | null;
+  domain: 'movie' | 'series' | 'game' | null;
+}
+const {kind} = Astro.props;
+const people = kind === 'staff';
+const title = people ? 'Staff' : 'Studios';
+const icon = people ? 'user' : 'building';
+const {pathname, searchParams} = Astro.url;
+const domains = await viewerMediaPreferences(Astro.locals);
+const choices = [
+  ...(domains.show_movies_series ? [['movie', 'Movies'], ['series', 'Series']] : []),
+  ...(domains.show_games ? [['game', 'Games']] : []),
+] as const;
+const scope = choices.find(([key]) => key === searchParams.get('scope'))?.[0] || 'all';
+const requestScope = scope === 'all' && !domains.show_games ? 'screen' :
+  scope === 'all' && !domains.show_movies_series ? 'game' : scope;
+const sorts = [
+  ['popular', 'Most popular'],
+  ['score', 'Highest rated'],
+  ...(people ? [['birthdays', 'Birthdays today']] : []),
+];
+const sort = sorts.find(([key]) => key === searchParams.get('sort'))?.[0] || 'popular';
+const requestedPage = Number(searchParams.get('page'));
+const page = Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 100 ? requestedPage : 1;
+const utcToday = new Date().toISOString().slice(5, 10);
+const requestedDay = searchParams.get('day');
+const calendarDay = requestedDay && /^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/.test(requestedDay)
+  && new Date(`2000-${requestedDay}T00:00:00Z`).toISOString().slice(5, 10) === requestedDay ? requestedDay : utcToday;
+const birthday = sort === 'birthdays';
+const birthdayLabel = new Date(`2000-${calendarDay}T00:00:00Z`).toLocaleDateString(
+  requestDateLocale(Astro.request.headers.get('accept-language')), {month:'long', day:'numeric', timeZone:'UTC'});
+const href = (next: {scope?: string; sort?: string; page?: number} = {}) => {
+  const params = new URLSearchParams();
+  const media = next.scope ?? scope;
+  const order = next.sort ?? sort;
+  if (media !== 'all') params.set('scope', media);
+  if (order !== 'popular') params.set('sort', order);
+  if (order === 'birthdays') params.set('day', calendarDay);
+  if (next.page && next.page > 1) params.set('page', String(next.page));
+  return pathname + (params.size ? '?' + params : '');
+};
+let data: {results: Card[]; has_more: boolean} = {results: [], has_more: false};
+let failed = false;
+if (choices.length) {
+  const params = new URLSearchParams({scope:requestScope, sort, page:String(page)});
+  if (birthday) params.set('day', calendarDay);
+  try {
+    data = await tracker(`browse/contributors/${kind}?${params}`, Astro.locals.token);
+  } catch (cause) {
+    failed = true;
+    Astro.response.status = trackerFailure(cause).status;
+  }
+}
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+---
+<Tracker {title}>
+  <section class="page-width browse-page contributor-directory" data-contributor-directory data-birthday={birthday ? calendarDay : undefined}>
+    <header class="browse-header">
+      <h1>{title}</h1>
+      {choices.length > 1 && <nav class="browse-types contributor-directory-scope" aria-label="Media type">
+        {[['all','All'], ...choices].map(([key,label]) => (
+          <a href={href({scope:key})} aria-current={scope===key ? 'page' : undefined}>{label}</a>
+        ))}
+      </nav>}
+    </header>
+    <BrowseContributorLinks/>
+    <div class="contributor-directory-controls">
+      <nav class="browse-view-switch" aria-label="Sort contributors">
+        {sorts.map(([key,label]) => (
+          <a href={href({sort:key})} aria-current={sort===key ? 'page' : undefined}>{label}</a>
+        ))}
+      </nav>
+      <span>{birthday ? birthdayLabel : 'Ranked by credited works'}</span>
+    </div>
+    {data.results.length > 0 && <ul class:list={['contributor-directory-grid', {'directory-studios':!people}]}>
+      {data.results.map((card, index) => {
+        const image = artwork(card.image, 'w342', 'direct');
+        const type = scope === 'all' ? card.domain : scope;
+        const detail = `/${people ? 'person' : 'studio'}/${card.key}${type ? '?media_type='+type : ''}`;
+        return <li>
+          <a href={detail} class="directory-card">
+            <div class="directory-art">
+              {image ? <img src={image} alt="" loading={index < 6 ? 'eager' : 'lazy'} decoding="async"/> : <Icon name={icon}/>}
+            </div>
+            <span class="directory-name">{card.name}</span>
+            {people && card.department && <span class="directory-department">{card.department}</span>}
+          </a>
+        </li>;
+      })}
+    </ul>}
+    {failed ? <div class="empty-state"><h2>Unable to load {title.toLowerCase()}</h2><a class="button-secondary" href={href({page})} data-astro-reload>Try again</a></div> :
+      !data.results.length && <div class="empty-state"><h2>{!choices.length ? 'Enable a media type to browse' : birthday ? 'No known birthdays today' : 'No ranked results yet'}</h2>
+        {!choices.length && <a class="button-secondary" href="/settings/lists">List settings</a>}
+      </div>}
+    {!failed && (page > 1 || data.has_more && page < 100) && <nav class="browse-static-pages" aria-label="Result pages">
+      {page > 1 && <a href={href({page:page-1})} rel="prev">Previous</a>}
+      {data.has_more && page < 100 && <a href={href({page:page+1})} rel="next">Next</a>}
+    </nav>}
+  </section>
+</Tracker>
+<style>
+  .contributor-directory .browse-header { margin-block-end:12px; }
+  .contributor-directory-scope { flex-wrap:wrap; }
+  .contributor-directory-scope a:focus-visible { outline:none; background:var(--field); color:var(--text); }
+  .contributor-directory-controls {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:10px 16px;
+    margin-block-end:24px;
+    color:var(--muted);
+  }
+  .contributor-directory-controls .browse-view-switch { flex-wrap:wrap; }
+  .contributor-directory-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
+    gap:24px 18px;
+    padding:0;
+    margin:0;
+    list-style:none;
+  }
+  .directory-card { display:grid; gap:7px; border-radius:8px; color:var(--text); }
+  .directory-card:focus-visible { outline:none; }
+  .directory-card:is(:hover,:focus-visible) .directory-name { color:var(--blue); }
+  .directory-card:focus-visible .directory-art { background:var(--field); }
+  .directory-card:focus-visible img { opacity:.78; }
+  .directory-art {
+    display:grid;
+    place-items:center;
+    aspect-ratio:2 / 3;
+    border-radius:8px;
+    background:var(--panel);
+    color:var(--muted);
+    font-size:28px;
+  }
+  .directory-art img { inline-size:100%; block-size:100%; object-fit:cover; border-radius:inherit; }
+  .directory-studios .directory-art { aspect-ratio:4 / 3; }
+  .directory-studios .directory-art img { object-fit:contain; padding:18%; box-sizing:border-box; }
+  .directory-name { font-weight:650; line-height:1.2; overflow-wrap:anywhere; }
+  .directory-department { color:var(--muted); font-size:13px; }
+  @media (max-width:650px) {
+    .contributor-directory-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,115px),1fr)); gap:20px 12px; }
+  }
+</style>
+<script>
+  function syncBirthday() {
+    const directory = document.querySelector<HTMLElement>('[data-contributor-directory]');
+    if (!directory) return;
+    const today = new Date();
+    const day = [today.getMonth()+1, today.getDate()].map(value => String(value).padStart(2,'0')).join('-');
+    if (directory.dataset.birthday && directory.dataset.birthday !== day) {
+      const url = new URL(location.href);
+      url.searchParams.set('day', day);
+      url.searchParams.delete('page');
+      location.replace(url);
+      return;
+    }
+    for (const link of directory.querySelectorAll<HTMLAnchorElement>('a[href*="sort=birthdays"]')) {
+      const url = new URL(link.href);
+      url.searchParams.set('day', day);
+      link.href = url.href;
+    }
+  }
+  syncBirthday();
+  document.addEventListener('astro:page-load', syncBirthday);
+</script>

@@ -7,6 +7,15 @@ export const browseNavigationItems = [
   {tab:'game', label:'Games', icon:'gamepad'},
 ] as const;
 
+export const browseContributorItems = [
+  {href:'/browse/staff', label:'Staff', icon:'users'},
+  {href:'/browse/studios', label:'Studios', icon:'building'},
+] as const;
+
+export function browseContributorRoute(pathname: string) {
+  return browseContributorItems.some(({href}) => pathname.replace(/\/$/, '') === href);
+}
+
 export const browseNavigationShortcuts = [
   {key:'trending', label:'Trending'},
   {key:'newest', label:'New releases'},
@@ -37,11 +46,12 @@ export function browseHomeHref(domains: MediaDomains) {
 
 export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, url: URL = new URL(location.href)) {
   const current = browseTab(url);
+  const contributor = browseContributorRoute(url.pathname);
   const href = browseHomeHref(domains);
   const targets = document.querySelectorAll<HTMLAnchorElement>('[data-browse-home], [data-mobile-item=browse]');
   targets.forEach(link => {
     link.href = href;
-    if (current) link.setAttribute('aria-current', link.hasAttribute('data-browse-home') ? 'location' : 'page');
+    if (current || contributor) link.setAttribute('aria-current', link.hasAttribute('data-browse-home') ? 'location' : 'page');
     else link.removeAttribute('aria-current');
   });
   let visibleChoices = 0;
@@ -53,6 +63,14 @@ export function syncBrowseNavigation(nav: HTMLElement, domains: MediaDomains, ur
     if (enabled && category === current) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
+  const contributors = nav.querySelector<HTMLElement>('[data-browse-contributors]');
+  if (contributors) {
+    contributors.hidden = visibleChoices === 0;
+    for (const link of contributors.querySelectorAll('a')) {
+      if (contributor && link.pathname === url.pathname.replace(/\/$/, '')) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+  }
   const toggle = nav.querySelector<HTMLButtonElement>('[data-browse-menu-toggle]');
   if (toggle) toggle.hidden = visibleChoices === 0;
 }

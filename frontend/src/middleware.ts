@@ -25,6 +25,7 @@ const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|s
 // Old numeric Stats bookmarks redirect to the username-based profile Stats
 // route after the same public-profile permission check as /profile/{id}.
 const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
+const PUBLIC_CONTRIBUTOR_BROWSE_RE = /^\/browse\/(?:staff|studios)\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
@@ -157,6 +158,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const isAllowedAnonymousPublicPage = async () => {
     const isGatedPage =
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
+      PUBLIC_CONTRIBUTOR_BROWSE_RE.test(pathname) ||
       PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
       (context.request.method === 'GET' && (PUBLIC_PROFILE_SOCIAL_RE.test(pathname)||PUBLIC_PROFILE_SEASONS_RE.test(pathname)||PUBLIC_TITLE_SEASONS_RE.test(pathname))) ||

@@ -1,6 +1,7 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
 import BrowseMediaTypes from '../../components/BrowseMediaTypes.astro';
+import BrowseContributorLinks from '../../components/BrowseContributorLinks.astro';
 import BrowseSearchField from '../../components/BrowseSearchField.astro';
 import BrowseGenreFilter from '../../components/BrowseGenreFilter.astro';
 import BrowseGamePlatforms from '../../components/BrowseGamePlatforms.astro';
@@ -55,6 +56,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
       <BrowseMediaTypes active="game" movieHref={browseTabHref('movie',tabContext.forTab('movie').values)} seriesHref={browseTabHref('series',tabContext.forTab('series').values)} showMovies={domains.show_movies_series} showGames={domains.show_games}/>
       <nav class="browse-view-switch" aria-label="Browse layout"><a href={gameBrowseHref(values,{view:null})} data-game-layout="grid" aria-current={!timeline?'page':undefined}><Icon name="grid"/><span>Grid</span></a><a href={gameBrowseHref(values,{view:'timeline'})} data-game-layout="timeline" aria-current={timeline?'page':undefined}><Icon name="calendar"/><span>Timeline</span></a></nav>
     </div></header>
+    <BrowseContributorLinks mobileOnly/>
     <form id="browse-filters" class="browse-filters" data-motion-static role="search" data-browse-form>
       <input type="hidden" name="view" value={timeline?'timeline':'grid'}/>
       <input type="hidden" name="unfiltered" value={values.get('unfiltered')||''}/>

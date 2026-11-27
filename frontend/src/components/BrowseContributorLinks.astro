@@ -1,0 +1,45 @@
+---
+import Icon from './Icon.astro';
+import {browseContributorItems} from '../lib/browse-navigation';
+
+const {mobileOnly = false} = Astro.props;
+---
+<nav class:list={['browse-contributor-links', {'browse-contributor-links-mobile':mobileOnly}]} aria-label="Browse contributors">
+  {browseContributorItems.map(({href, label, icon}) => (
+    <a {href} aria-current={Astro.url.pathname.replace(/\/$/, '') === href ? 'page' : undefined}>
+      <Icon name={icon}/>{label}
+    </a>
+  ))}
+</nav>
+<style>
+  .browse-contributor-links {
+    display:flex;
+    flex-wrap:wrap;
+    gap:4px;
+    margin-block-end:24px;
+  }
+  .browse-contributor-links a {
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    min-block-size:36px;
+    padding-inline:12px;
+    border-radius:5px;
+    color:var(--muted);
+    font-weight:650;
+    transition:color .15s;
+  }
+  .browse-contributor-links a:hover { color:var(--text); }
+  .browse-contributor-links a:is([aria-current=page],:focus-visible) {
+    outline:none;
+    color:var(--blue);
+    background:var(--field);
+  }
+  .browse-contributor-links-mobile { display:none; }
+  @media (max-width:1040px) {
+    .browse-contributor-links-mobile { display:flex; margin-block-end:16px; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .browse-contributor-links a { transition:none; }
+  }
+</style>
