@@ -1461,10 +1461,13 @@ async def contributor_directory(
     screen = tuple(domain for domain in ('movie', 'series') if scope in ('all', 'screen', domain))
     games = ('game',) if scope in ('all', 'game') and allowed(viewer) else ()
     response.headers['Cache-Control'] = 'private, no-store'
-    return await browse_contributors(db, kind=kind, domains=screen + games, sort=sort, page=page, day=day,
-        job=job if kind == 'staff' else None, preview=preview,
-        show_anime=await anime_is_visible(db) if screen else True,
-        hide_erotic=await hide_erotic_games(db, viewer.id) if games else True)
+    try:
+        return await browse_contributors(db, kind=kind, domains=screen + games, sort=sort, page=page, day=day,
+            job=job if kind == 'staff' else None, preview=preview,
+            show_anime=await anime_is_visible(db) if screen else True,
+            hide_erotic=await hide_erotic_games(db, viewer.id) if games else True)
+    except TimeoutError as exc:
+        raise HTTPException(503, 'Contributor rankings are temporarily unavailable') from exc
 
 
 @router.get('/browse/facets')

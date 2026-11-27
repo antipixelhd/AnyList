@@ -96,15 +96,20 @@ def birthday_people(day):
         birthday.op('~')(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'), func.right(birthday, 5) == day).cte()
 
 
-def eligible_staff_credit(domains, job, show_anime, hide_erotic):
+def eligible_staff(domains, job, birthdays, show_anime, hide_erotic):
     work, alias = aliased(Entity), aliased(Entity)
-    members = select(alias.id).where(or_(alias.id == Entity.id, alias.canonical_person_id == Entity.id)).correlate(Entity)
-    statement = select(Credit.id).select_from(Credit).join(
-        work, work.id == Credit.work_id).where(
-        Credit.contributor_id.in_(members),
-        Credit.attributes['source_active'].astext.is_distinct_from('false'), Credit.role != 'thanks',
-        or_(*(and_(work.kind == domain, visible_work(work, domain, show_anime, hide_erotic))
-            for domain in domains))).correlate(Entity)
+    # Check work visibility once per title, then join the credit graph in
+    # one pass. A correlated eligibility scan for each person does not scale.
+    works = select(work.id).where(or_(*(and_(
+        work.kind == domain, visible_work(work, domain, show_anime, hide_erotic))
+        for domain in domains))).cte().prefix_with('MATERIALIZED', dialect='postgresql')
+    root_id = func.coalesce(alias.canonical_person_id, alias.id)
+    statement = select(root_id.label('entity_id')).select_from(Credit).join(
+        works, works.c.id == Credit.work_id).join(alias, alias.id == Credit.contributor_id).where(
+        alias.kind == 'person', Credit.attributes['source_active'].astext.is_distinct_from('false'),
+        Credit.role != 'thanks')
+    if birthdays is not None:
+        statement = statement.join(birthdays, birthdays.c.id == root_id)
     if job:
         # A person can qualify for several jobs. Use their credit, including
         # composition credits stored under TMDB's general Sound department.
@@ -114,20 +119,18 @@ def eligible_staff_credit(domains, job, show_anime, hide_erotic):
         if job == 'acting':
             statement = statement.where(~func.coalesce(Credit.character_label, '').op('~*')(
                 r'\y(uncredited|archive footage|archive sound)\y'))
-    return statement.exists()
+    return statement.distinct().cte()
 
 
-def observed_person_popularity(birthdays):
+def observed_person_popularity(eligible):
     source = aliased(Entity)
     root_id = func.coalesce(source.canonical_person_id, source.id)
     popularity = number(Credit.attributes['popularity'])
     # TMDB attaches its person-level popularity to cast and crew responses.
     # Use one observation per canonical person, including credits on aliases.
     statement = select(root_id.label('entity_id'), popularity.label('popularity')).select_from(
-        Credit).join(source, source.id == Credit.contributor_id).where(
+        Credit).join(source, source.id == Credit.contributor_id).join(eligible, eligible.c.entity_id == root_id).where(
         source.kind == 'person', Credit.provider == 'tmdb', popularity >= 0)
-    if birthdays is not None:
-        statement = statement.join(birthdays, birthdays.c.id == root_id)
     return statement.distinct(root_id).order_by(root_id, Credit.id.desc()).subquery()
 
 
@@ -144,7 +147,8 @@ async def browse_contributors(db, *, kind, domains, sort, page, day=None, job=No
         cached = _pages.get(key)
         if cached is not None:
             return preview_page(cached) if preview else cached
-        results = await ranked_page(db, kind, domains, sort, page, day, job, show_anime, hide_erotic)
+        async with asyncio.timeout(5 if kind == 'staff' else None):
+            results = await ranked_page(db, kind, domains, sort, page, day, job, show_anime, hide_erotic)
         _pages.set(key, results, 90)
         return preview_page(results) if preview else results
 
@@ -156,12 +160,12 @@ def preview_page(page):
 
 def staff_page(domains, day, job, show_anime, hide_erotic):
     birthdays = birthday_people(day) if day else None
-    ranking = observed_person_popularity(birthdays)
+    eligible = eligible_staff(domains, job, birthdays, show_anime, hide_erotic)
+    ranking = observed_person_popularity(eligible)
     profile = select(Entity.id, Entity.name, Entity.image_url, literal(None).label('domain'),
-        Entity.attributes['known_for_department'].astext.label('department')).where(
-        eligible_staff_credit(domains, job, show_anime, hide_erotic))
+        Entity.attributes['known_for_department'].astext.label('department'))
     if birthdays is not None:
-        profile = profile.join(birthdays, birthdays.c.id == Entity.id).outerjoin(
+        profile = profile.join(eligible, eligible.c.entity_id == Entity.id).outerjoin(
             ranking, ranking.c.entity_id == Entity.id)
     else:
         profile = profile.join(ranking, ranking.c.entity_id == Entity.id).where(
