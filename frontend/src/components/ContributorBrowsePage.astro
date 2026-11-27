@@ -133,13 +133,14 @@ Astro.response.headers.set('Cache-Control', 'private, no-store');
     margin:0;
     list-style:none;
   }
-  .directory-card { display:grid; gap:7px; border-radius:8px; color:var(--text); }
+  .directory-card { display:grid; grid-template-columns:minmax(0,1fr); gap:7px; border-radius:8px; color:var(--text); }
   .directory-card:focus-visible { outline:none; }
   .directory-card:is(:hover,:focus-visible) .directory-name { color:var(--blue); }
   .directory-card:focus-visible .directory-art { background:var(--field); }
   .directory-card:focus-visible img { opacity:.78; }
   .directory-art {
     display:grid;
+    grid-template:minmax(0,1fr) / minmax(0,1fr);
     place-items:center;
     aspect-ratio:2 / 3;
     border-radius:8px;
