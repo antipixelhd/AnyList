@@ -1,5 +1,6 @@
 ---
 import Icon from './Icon.astro';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import ListFilterSelect from './ListFilterSelect.astro';
 import type {CategoryPresentation} from '../lib/list-categories.ts';
 interface Props {
@@ -21,6 +22,7 @@ interface Props {
 }
 const {statuses,counts={},genres,years,status='all',sort='title',defaultSort='title',query='',genre='',year='',favorites=false,progressLabel='Progress',pending=false}=Astro.props;
 const {categoryPresentation,categoryOwner=false}=Astro.props;
+const showCounts=(await viewerMediaPreferences(Astro.locals)).show_list_counts === true;
 const categoryInfo=categoryPresentation?.categories.some(category=>!!category.description);
 const categoryEdit=categoryPresentation?.categories.some(category=>category.can_rename||category.can_hide);
 const categoryControls=categoryPresentation&&(categoryOwner||categoryInfo);
@@ -38,7 +40,7 @@ const id=(name:string)=>pending?`pending-${name}`:name;
       <button type="button" class="mobile-filter-toggle" aria-label="Filters and sorting" aria-expanded="false" aria-controls={id('list-filter-panel')}><Icon name="ellipsis"/></button>
     </div>
     <div class="list-filter-panel" id={id('list-filter-panel')}>
-      <div class="list-categories" data-list-categories>
+      <div class="list-categories" data-list-categories data-list-counts-always={showCounts || undefined}>
       <div class="category-heading">
         <h2>Lists</h2>
         {categoryControls&&<div data-category-controls>

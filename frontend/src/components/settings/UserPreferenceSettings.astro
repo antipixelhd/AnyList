@@ -207,7 +207,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
           <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
         </label>
-        <label class="setting-switch-row" for="show-list-counts"><span><strong>Show list counts (Tom setting)</strong><small>Show category counts on all lists you view, with a total on desktop.</small></span><input id="show-list-counts" type="checkbox" checked={trackingPrefs.show_list_counts === true}/></label>
+        <label class="setting-switch-row" for="show-list-counts"><span><strong>Show list counts</strong><small>Always show counts beside the list filters on profiles you view.</small></span><input id="show-list-counts" type="checkbox" checked={trackingPrefs.show_list_counts === true}/></label>
         <label class="setting-switch-row" for="show-game-achievements"><span><strong>Show game achievements</strong></span><input id="show-game-achievements" type="checkbox" checked={trackingPrefs.show_game_achievements}/></label>
         <div class="settings-inline-grid settings-single-column">
           <label>Default list sorting
